@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
-from autor3search_python import doctor
+from autor3search_python import config, doctor, gitx
 from autor3search_python.cli.main import EXIT_OK
 
 _LABELS = {
@@ -15,12 +16,26 @@ _LABELS = {
 }
 
 
+def _configured_python(directory: str) -> str:
+    """The interpreter a run would actually use, so pytest-benchmark is
+    checked against the one that will run the benchmarks — not against
+    whichever interpreter happens to be running the harness itself."""
+    try:
+        root = Path(gitx.root(directory))
+    except gitx.GitError:
+        return ""
+    try:
+        return config.load(root / config.CONFIG_PATH).python
+    except config.ConfigError:
+        return ""
+
+
 def run(args: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="autor3search-python doctor")
     parser.add_argument("-C", dest="directory", default=".", help="repository root")
     opts = parser.parse_args(args)
 
-    findings = doctor.check(opts.directory)
+    findings = doctor.check(opts.directory, python=_configured_python(opts.directory))
     width = max(len(f.name) for f in findings)
     for f in findings:
         print(f"{_LABELS[f.severity]}  {f.name.ljust(width)}  {f.detail}")

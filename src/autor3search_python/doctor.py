@@ -155,6 +155,12 @@ def check_benchmark_tooling(python: str = "") -> Finding:
             Severity.FAIL,
         )
     versions = proc.stdout.strip().split()
+    if len(versions) < 2:
+        return Finding(
+            "pytest-benchmark",
+            f"unexpected output from {exe}: {proc.stdout!r}",
+            Severity.WARN,
+        )
     return Finding(
         "pytest-benchmark",
         f"pytest {versions[0]}, pytest-benchmark {versions[1]}",
