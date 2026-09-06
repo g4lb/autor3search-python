@@ -1,0 +1,21 @@
+"""The optimized version: a list joined once, and a byte-wise ASCII fold."""
+
+_LOWER = {chr(c): chr(c + 32) for c in range(ord("A"), ord("Z") + 1)}
+
+
+def count_words(s):
+    """Return how many times each lowercase alphanumeric word appears in s."""
+    counts = {}
+    get = counts.get
+    lower = _LOWER
+    for field in s.split():
+        chars = []
+        append = chars.append
+        for ch in field:
+            ch = lower.get(ch, ch)
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+                append(ch)
+        if chars:
+            word = "".join(chars)
+            counts[word] = get(word, 0) + 1
+    return counts
