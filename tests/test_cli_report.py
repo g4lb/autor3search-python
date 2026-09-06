@@ -48,10 +48,12 @@ def test_report_summarizes(git_repo, capsys):
         results.append(p, row)
     assert cli_main.main(["report", "-C", str(git_repo)]) == 0
     out = capsys.readouterr().out
-    assert "4" in out  # total
-    assert "2 keep" in out
+    assert "experiments    4" in out  # total
+    assert "2 keep, 1 discard, 1 fail, 0 crash" in out
     assert "rewrite the loop" in out  # largest win named
-    assert "55" in out or "0.45" in out  # cumulative 0.5 * 0.9 = 0.45
+    assert out.index("rewrite the loop") < out.index("preallocate")  # bigger win listed first
+    # cumulative 0.5 * 0.9 = 0.45, i.e. -55.00% overall
+    assert "cumulative     0.4500  (-55.00% overall)" in out
 
 
 def test_report_on_an_empty_log_says_so(git_repo, capsys):
