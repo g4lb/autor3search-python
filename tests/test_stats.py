@@ -81,8 +81,40 @@ def test_median_ci_is_unbounded_below_six_observations():
 
 def test_median_ci_brackets_the_median_at_six():
     xs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    assert stats.median_ci(xs) == (1.0, 6.0)
+
+
+@pytest.mark.parametrize("n", [6, 7, 10, 20])
+def test_median_ci_actually_covers_at_least_95_percent(n):
+    """Independently recomputes the binomial coverage of the returned interval.
+
+    This is the test that would have caught the off-by-one: bracketing the
+    median is not enough, the interval has to actually cover 95% of the mass.
+    """
+    xs = [float(i) for i in range(1, n + 1)]
     lo, hi = stats.median_ci(xs)
-    assert lo <= stats.median(xs) <= hi
+    k = xs.index(lo) + 1  # 1-indexed order statistic
+    total = 2.0**n
+    coverage = sum(stats.binom(n, i) for i in range(k, n - k + 1)) / total
+    assert coverage >= 0.95
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ([1.0, 1.0, 2.0], [3.0, 4.0, 4.0]),
+        ([1.0, 1.0, 2.0, 2.0], [3.0, 3.0, 4.0, 4.0]),
+    ],
+)
+def test_tied_maximally_separated_samples_are_clamped_to_the_exact_floor(a, b):
+    """A single duplicate timing must not make a KEEP reachable the exact test forbids."""
+    floor = stats.min_achievable_p(len(a), len(b))
+    assert stats.mann_whitney_u(a, b) == pytest.approx(floor)
+
+
+def test_u_counts_returns_an_immutable_tuple():
+    """Cached: a mutable list would let one caller poison every later comparison."""
+    assert isinstance(stats._u_counts(3, 3), tuple)
 
 
 def test_geomean():

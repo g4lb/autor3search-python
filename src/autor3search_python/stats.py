@@ -11,7 +11,6 @@ from __future__ import annotations
 import functools
 import math
 import statistics
-import sys
 from collections.abc import Sequence
 
 # Below this many observations per side, the distribution-free confidence
@@ -62,8 +61,12 @@ def count_for_alpha(alpha: float) -> int:
 
 
 @functools.cache
-def _u_counts(n1: int, n2: int) -> list[float]:
-    """counts[u] = number of arrangements with Mann-Whitney statistic exactly u."""
+def _u_counts(n1: int, n2: int) -> tuple[float, ...]:
+    """counts[u] = number of arrangements with Mann-Whitney statistic exactly u.
+
+    Cached and returned as a tuple rather than a list: a mutable result shared
+    across every call with these sizes could be poisoned by one careless caller.
+    """
     size = n1 * n2 + 1
     memo: dict[tuple[int, int, int], float] = {}
 
@@ -80,12 +83,7 @@ def _u_counts(n1: int, n2: int) -> list[float]:
         memo[key] = out
         return out
 
-    old = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old, 10000))
-    try:
-        return [f(n1, n2, u) for u in range(size)]
-    finally:
-        sys.setrecursionlimit(old)
+    return tuple(f(n1, n2, u) for u in range(size))
 
 
 def _exact_two_sided_p(u: float, n1: int, n2: int) -> float:
@@ -102,6 +100,7 @@ def _exact_two_sided_p(u: float, n1: int, n2: int) -> float:
 
 
 def _normal_two_sided_p(u: float, n1: int, n2: int, tie_groups: Sequence[int]) -> float:
+    floor = min_achievable_p(n1, n2)
     mean = n1 * n2 / 2.0
     n = n1 + n2
     tie_term = sum(t**3 - t for t in tie_groups)
@@ -111,7 +110,12 @@ def _normal_two_sided_p(u: float, n1: int, n2: int, tie_groups: Sequence[int]) -
     z = (abs(u - mean) - 0.5) / math.sqrt(var)  # continuity correction
     if z <= 0:
         return 1.0
-    return min(math.erfc(z / math.sqrt(2)), 1.0)
+    p = min(math.erfc(z / math.sqrt(2)), 1.0)
+    # The untied exact floor is a lower bound on the true tied-permutation floor
+    # (ties only ever remove distinct arrangements, never add them), so clamping
+    # up to it here can only ever refuse a KEEP the exact test would have
+    # granted anyway — never grant one the exact test would have refused.
+    return max(p, floor)
 
 
 def _ranks(values: Sequence[float]) -> tuple[list[float], list[int]]:
@@ -169,12 +173,16 @@ def median_ci(xs: Sequence[float], confidence: float = 0.95) -> tuple[float, flo
         return None
     ordered = sorted(xs)
     total = 2.0**n
-    # Widen symmetrically from the middle until the binomial mass covers the level.
-    for k in range(n // 2, -1, -1):
+    # mass is the coverage of the 1-indexed interval [X_(k), X_(n+1-k)], i.e.
+    # order statistics k and n-k+1. In 0-indexed terms that is
+    # ordered[k - 1], ordered[n - k] — narrower by one on each side than
+    # ordered[k], ordered[n - 1 - k], which is what the interval covers if k
+    # is (wrongly) treated as a 0-indexed position.
+    for k in range(n // 2, 0, -1):
         mass = sum(binom(n, i) for i in range(k, n - k + 1)) / total
         if mass >= confidence:
-            return ordered[k], ordered[n - 1 - k]
-    return ordered[0], ordered[-1]
+            return ordered[k - 1], ordered[n - k]
+    return None
 
 
 def geomean(ratios: Sequence[float]) -> float:
