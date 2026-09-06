@@ -112,6 +112,20 @@ def test_compile_gate_passes_on_valid_source(tmp_path):
     assert r(tmp_path).compile_gate(["."]).ok() is True
 
 
+def test_compile_gate_excludes_dot_prefixed_paths(tmp_path):
+    """Pinning the -x exclude: deleting it would leave this suite green while
+    silently reintroducing the exact regression that already happened once."""
+    (tmp_path / "good.py").write_text("def f():\n    return 1\n")
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    (venv / "broken.py").write_text("def f(\n")
+    (tmp_path / ".hidden.py").write_text("def g(\n")
+    res = r(tmp_path).compile_gate(["."])
+    assert res.ok() is True
+    assert "broken.py" not in res.stdout + res.stderr
+    assert "hidden.py" not in res.stdout + res.stderr
+
+
 def test_import_gate_fails_on_a_module_that_raises(tmp_path):
     (tmp_path / "boom.py").write_text("raise RuntimeError('nope')\n")
     res = runner.Runner(tmp_path, 30, env=runner.bench_env(tmp_path, config.default())).import_gate(

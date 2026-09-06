@@ -120,7 +120,14 @@ class Runner:
         except subprocess.TimeoutExpired:
             timed_out = True
             _kill_group(proc)
-            out, err = proc.communicate()
+            # Bounded: a grandchild that escapes the process group (by calling
+            # setsid itself) would otherwise block this call forever. An
+            # unattended overnight loop must return timed_out=True rather than
+            # hang — a wrong answer beats nobody noticing it never came back.
+            try:
+                out, err = proc.communicate(timeout=_GRACE_SECONDS)
+            except subprocess.TimeoutExpired as e:
+                out, err = e.stdout, e.stderr
         duration = time.monotonic() - start
         res = Result(
             args=tuple(args),
