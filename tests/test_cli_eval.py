@@ -109,6 +109,7 @@ def test_a_gate_failure_still_gets_a_row(run_ready, monkeypatch):
     monkeypatch.setattr(pipeline, "evaluate", lambda opts: (r, None))
     cli_main.main(["eval", "-C", str(run_ready), "-desc", "oops"])
     rows = results.load(run_ready / results.PATH)
+    assert len(rows) == 1  # exactly one row per verdict — indexing [0] alone doesn't test this
     assert rows[0].status == "FAIL"
     assert rows[0].score == 0.0
 
@@ -180,6 +181,18 @@ def test_keyboard_interrupt_becomes_aborted_with_no_row(run_ready, monkeypatch, 
     assert doc["status"] == "ABORTED"
     assert doc["reason"] == "stop_forced"
     assert results.load(run_ready / results.PATH) == []
+
+
+def test_aborted_reports_the_real_stop_sentinel_not_a_hardcoded_one(run_ready, monkeypatch, capsys):
+    """An interrupt means stop either way, but the field must read the actual
+    sentinel rather than assume True — it must not state something untrue."""
+
+    def interrupted(_opts):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pipeline, "evaluate", interrupted)
+    cli_main.main(["eval", "-C", str(run_ready), "--json", "-desc", "x"])
+    assert json.loads(capsys.readouterr().out)["stop_requested"] is False
 
 
 def test_a_harness_malfunction_is_not_a_verdict(run_ready, monkeypatch, capsys):

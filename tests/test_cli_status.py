@@ -23,8 +23,10 @@ def test_status_reports_the_run(started, capsys):
     out = capsys.readouterr().out
     assert "t1" in out
     assert "autor3search-python/t1" in out
-    assert "checked out" in out
-    assert "not requested" in out
+    # Parenthesized: "not checked out" also contains "checked out" as a plain
+    # substring, so that weaker check would pass against either rendering.
+    assert "(checked out)" in out
+    assert "stop           not requested" in out
     assert "0 run" in out
 
 
@@ -42,14 +44,24 @@ def test_status_counts_experiments_by_verdict(started, capsys):
 def test_status_reports_a_pending_stop(started, capsys):
     runstop.request_stop(state.state_dir(started, "t1"))
     cli_main.main(["status", "-C", str(started)])
-    assert "requested" in capsys.readouterr().out
+    # The full field, not just "requested": that substring also appears
+    # inside "not requested", so a check against it alone would pass even if
+    # the code never noticed the pending stop at all.
+    assert "stop           requested" in capsys.readouterr().out
+
+
+def test_status_reports_no_pending_stop_by_default(started, capsys):
+    """Paired with the positive case above: together they cannot both pass
+    unless the code actually distinguishes the two states."""
+    cli_main.main(["status", "-C", str(started)])
+    assert "stop           not requested" in capsys.readouterr().out
 
 
 def test_status_works_from_another_branch_with_an_explicit_tag(started, capsys):
     git(started, "checkout", "-q", "main")
     assert cli_main.main(["status", "-C", str(started), "-tag", "t1"]) == 0
     out = capsys.readouterr().out
-    assert "not checked out" in out
+    assert "(not checked out)" in out
 
 
 def test_status_writes_nothing(started):

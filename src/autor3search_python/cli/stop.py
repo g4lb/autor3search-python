@@ -79,17 +79,30 @@ def run(args: list[str]) -> int:
         print("To cancel:  autor3search-python stop -clear")
         return EXIT_OK
 
-    pid, running = runstop.eval_running(ctx.state_dir)
-    if running:
-        try:
-            _signal_group(pid)
-            print(f"signalled the running eval (pid {pid}) to abandon its experiment.")
-        except (ValueError, OSError) as e:
-            print(f"autor3search-python stop: could not signal pid {pid}: {e}", file=sys.stderr)
-            return EXIT_USAGE
-    else:
-        print("no eval is running; the stop request is written and will be read next time.")
+    # This is the emergency brake: it must never crash on state that is
+    # already broken, which is exactly when a human reaches for -force. A pid
+    # file eval_running finds implausible is reported as an unknown eval
+    # state, not signalled (there is nothing safe to signal), and cleared so
+    # it does not poison the next command — the same shape as R12 for status.
+    try:
+        pid, running = runstop.eval_running(ctx.state_dir)
+    except runstop.StopError:
+        print(
+            "an eval may be running but its pid file is unreadable; it was not signalled. "
+            "The stop request is written and will be read next time."
+        )
         runstop.clear_eval_pid(ctx.state_dir)
+    else:
+        if running:
+            try:
+                _signal_group(pid)
+                print(f"signalled the running eval (pid {pid}) to abandon its experiment.")
+            except (ValueError, OSError) as e:
+                print(f"autor3search-python stop: could not signal pid {pid}: {e}", file=sys.stderr)
+                return EXIT_USAGE
+        else:
+            print("no eval is running; the stop request is written and will be read next time.")
+            runstop.clear_eval_pid(ctx.state_dir)
 
     # Report the state this leaves the repository in. Deliberately does not
     # change it: dropping a commit is the human's call, not this command's.

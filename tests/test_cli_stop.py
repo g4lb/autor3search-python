@@ -45,6 +45,18 @@ def test_force_reports_repository_state_without_changing_it(started, capsys, mon
     assert git(started, "rev-parse", "HEAD") == head_before
 
 
+@pytest.mark.parametrize("pid_contents", ["1\n", "not a pid\n"])
+def test_force_survives_a_corrupt_pid_file(started, capsys, pid_contents):
+    """This is the emergency brake: it must not crash on state that is
+    already broken, which is exactly when a human reaches for -force."""
+    sd = state.state_dir(started, "t1")
+    (sd / runstop.EVAL_PID_FILE).write_text(pid_contents)
+    assert cli_main.main(["stop", "-C", str(started), "-force"]) == 0
+    out = capsys.readouterr().out
+    assert "git reset --hard HEAD~1" in out  # the repository-state report still runs
+    assert runstop.stop_requested(sd) is True  # the stop request still landed
+
+
 def test_force_signals_the_running_eval(started, monkeypatch, capsys):
     monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
     signalled = []

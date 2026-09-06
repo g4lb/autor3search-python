@@ -109,7 +109,7 @@ def run(args: list[str]) -> int:
 
     previous: dict[int, Any] = {}
     for sig in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(ValueError, OSError):  # pragma: no cover - non-main thread
+        with contextlib.suppress(ValueError, OSError):
             previous[sig] = signal.signal(sig, on_signal)
 
     try:
@@ -133,7 +133,12 @@ def run(args: list[str]) -> int:
                     message="the experiment was interrupted before it was measured",
                 )
                 doc = build_json(
-                    result, ctx.base, ctx.tag, worktree, len(_rows(ctx.root)) + 1, True
+                    result,
+                    ctx.base,
+                    ctx.tag,
+                    worktree,
+                    len(_rows(ctx.root)) + 1,
+                    runstop.stop_requested(ctx.state_dir),
                 )
                 if opts.as_json:
                     print(json.dumps(doc))
@@ -176,7 +181,7 @@ def run(args: list[str]) -> int:
         return EXIT_USAGE
     finally:
         for sig, handler in previous.items():
-            with contextlib.suppress(ValueError, OSError):  # pragma: no cover
+            with contextlib.suppress(ValueError, OSError):
                 signal.signal(sig, handler)
 
 
