@@ -114,7 +114,16 @@ def format_mem(json_path: str | Path, limit: int = _TOP, root: str | Path | None
 
     entries = sorted(doc.get("top", []), key=lambda e: e.get("size", 0), reverse=True)[:limit]
     if not entries:
-        header.append("(no allocation sites recorded)")
+        if peak is not None:
+            header.append(
+                "(no allocation sites recorded — transient allocations are freed before "
+                "the session-end snapshot; see the peak figure above for total volume)"
+            )
+        else:
+            header.append(
+                "(no allocation sites recorded — transient allocations are freed before "
+                "the session-end snapshot, and no peak was recorded either)"
+            )
         return "\n".join(header)
 
     root_path = Path(root).resolve() if root is not None else None
