@@ -1,0 +1,17 @@
+# Harness output inside a repository being optimized (this repo optimizes
+# nothing, but the demo testdata repo under testdata/ does).
+.autor3search/
+results.tsv
+run.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
