@@ -16,7 +16,10 @@ def resolve_tag(root: Path, tag: str | None) -> str:
     """An explicit -tag wins; otherwise derive it from the checked-out branch."""
     if tag:
         return tag
-    branch = gitx.current_branch(root)
+    try:
+        branch = gitx.current_branch(root)
+    except gitx.GitError as e:
+        raise ContextError(f"{root} is not inside a git repository: {e}") from e
     derived = state.tag_from_branch(branch)
     if derived is None:
         raise ContextError(

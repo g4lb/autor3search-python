@@ -2,8 +2,12 @@
 
 This file is your instructions, coding agent. Read it fully before doing
 anything. It is the only thing a human edits to steer this run — everything
-else (the metric, the gates, the verdict) is a compiled binary you cannot
-change and should not try to.
+else (the metric, the gates, the verdict) is the installed harness itself
+(the `autor3search-python` package). Nothing on the filesystem stops you from
+editing it — it is an importable package in a venv like any other — but it is
+out of bounds all the same: it is what decides whether your own experiments
+are real, and an agent that can edit its own judge is not being measured by
+anything. Do not change it, and do not try to.
 
 ## Setup
 
@@ -29,10 +33,13 @@ What you MAY do:
 - Edit any Python source file that falls under one of the `scope` patterns in
   `.autor3search/config.toml`.
 - Add new files inside `scope`, as long as they are not `test_*.py`,
-  `*_test.py` or `conftest.py` files that duplicate or replace existing tests.
-- Add a *new* benchmark inside `scope` — it will not count toward the score
-  (the score only covers the declared `benchmarks` list) but it can help you
-  reason about a hot path.
+  `*_test.py` or `conftest.py` files. Any new file matching one of those
+  patterns trips the `new_test_file` gate — it does not matter whether it
+  duplicates an existing test, adds a new one, or only adds a benchmark; the
+  benchmark set is fixed at `baseline` time and the gate rejects the whole
+  experiment before it is even measured. If you want a different benchmark,
+  that is a conversation with the human for the next `baseline`, not
+  something to route around mid-run.
 - Run any read-only diagnostic command (linters, type checkers,
   `autor3search-python profile`) as often as you like between experiments.
 
@@ -53,10 +60,10 @@ What you MUST NOT do:
   makes, not something an unattended loop decides, and a swapped dependency
   can change *what* is measured, not just how fast it runs.
 - Edit `.autor3search/config.toml`. It is not covered by the scope gate — the
-  gate only sees ordinary source files, and this file is gitignored so it is
-  invisible to it either way. Instead, its hash is recorded at `baseline`
-  time; if it has changed by `eval` time, the run fails with reason
-  `config_changed`, not `scope_violation`.
+  gate explicitly skips it rather than matching it against `scope` like an
+  ordinary source file. Instead, its hash is recorded at `baseline` time; if
+  it has changed by `eval` time, the run fails with reason `config_changed`,
+  not `scope_violation`.
 - Edit an ordinary source file outside `scope`. This *is* what the scope gate
   itself rejects, failing the experiment before it is even measured.
 - Try to weaken, disable, or reinterpret the verdict. `eval`'s exit code and
@@ -75,8 +82,8 @@ exactly these:
 |---|---|---|
 | `0` | KEEP  — the change is a real, safe improvement | `KEEP` |
 | `1` | DISCARD — no significant improvement, or it lost the coin flip against noise | `DISCARD` |
-| `2` | FAIL — a gate rejected the change: scope violation, a new/edited test file, a compile/import failure, or a test failure | `FAIL` |
-| `3` | CRASH — the build failed outright or a phase timed out | `CRASH` |
+| `2` | FAIL — a gate rejected the change: scope violation, a new/edited test file, an import failure, or a test failure | `FAIL` |
+| `3` | CRASH — the code failed to compile, a phase timed out, or the measurement itself crashed | `CRASH` |
 
 Any status the harness cannot classify is reported as exit code `2`
 (FAIL) rather than a silent success — treat an unrecognized `--json` status
@@ -256,8 +263,10 @@ tracemalloc data — then reach for these:
   a local before the loop.
 - **`str.join` instead of `+=` in a loop.** Repeated concatenation is quadratic.
   The same applies to building lists with repeated `+`.
-- **Comprehensions and `map` over append loops.** The loop runs in C rather
-  than in the interpreter.
+- **Comprehensions and `map` over append loops.** The loop *body* is still
+  bytecode either way, but the surrounding iteration machinery runs in C
+  instead of interpreting a `for`/`append` pair on every element, which is
+  where the win comes from.
 - **Avoid re-creating work per call.** Precompile regexes at module scope,
   hoist constant computation, reach for `functools.lru_cache` when the input
   space is small and the function is pure.

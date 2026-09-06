@@ -1,4 +1,23 @@
-from autor3search_python import templates
+import re
+
+from autor3search_python import templates, verdict
+
+
+def test_program_md_exit_code_table_agrees_with_verdict():
+    """A stale table would send the agent branching on the wrong exit code."""
+    text = templates.program_md()
+    start = text.index("| Exit code | Meaning | Verdict status |")
+    table = text[start : start + 500]
+    rows = re.findall(r"^\| `(\d)` \|.*\| `([A-Z]+)` \|$", table, flags=re.MULTILINE)
+    assert len(rows) == 4  # KEEP, DISCARD, FAIL, CRASH — ABORTED is documented separately
+    any_reason = next(iter(verdict.Reason))
+    for code_str, status_str in rows:
+        status = verdict.Status(status_str)
+        expected = verdict.Result(status=status, reason=any_reason).exit_code()
+        assert int(code_str) == expected, (
+            f"program.md's table lists exit code {code_str} for {status_str}, "
+            f"but verdict.Result.exit_code() gives {expected}"
+        )
 
 
 def test_program_md_is_shipped_and_non_trivial():

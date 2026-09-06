@@ -73,6 +73,26 @@ def test_a_failed_baseline_leaves_no_branch_behind(ready, monkeypatch, capsys):
     assert gitx.current_branch(ready) == "main"
 
 
+def test_a_failed_baseline_unregisters_the_worktree_and_allows_retry(ready, monkeypatch):
+    """rmtree alone only removes the worktree's directory; git's own
+    registration under .git/worktrees/ survives that and permanently blocks
+    re-adding a worktree at the same path unless it is explicitly removed."""
+
+    def _raise(self, path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("autor3search_python.state.Baseline.save", _raise)
+    assert cli_main.main(["baseline", "-C", str(ready), "-tag", "t1"]) != 0
+
+    listing = git(ready, "worktree", "list")
+    sd = state.state_dir(ready, "t1")
+    assert str(sd / state.WORKTREE_NAME) not in listing
+
+    # The user-visible consequence: a retry under the same tag now succeeds.
+    monkeypatch.undo()
+    assert cli_main.main(["baseline", "-C", str(ready), "-tag", "t1"]) == 0
+
+
 def test_baseline_freezes_conftest_too(ready):
     (ready / "tests" / "conftest.py").write_text("# fixtures\n")
     git(ready, "add", "-A")

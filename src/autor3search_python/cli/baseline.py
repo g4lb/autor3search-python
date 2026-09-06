@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import shutil
 import sys
@@ -97,6 +98,11 @@ def run(args: list[str]) -> int:
         base.save(sd / state.BASELINE_FILE)
     except (gitx.GitError, freeze.FreezeError, BaselineError, OSError) as e:
         # Undo a partial baseline so a retry under the same tag is not blocked.
+        # `rmtree` below only removes the worktree's directory; git's own
+        # registration under .git/worktrees/ survives that and would permanently
+        # block re-adding a worktree at the same path, so unregister it first.
+        with contextlib.suppress(gitx.GitError):
+            gitx.remove_worktree(root, sd / state.WORKTREE_NAME)
         if created_branch:
             try:
                 gitx.checkout(root, original_branch)

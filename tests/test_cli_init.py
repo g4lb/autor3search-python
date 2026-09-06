@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 
 from autor3search_python import config
@@ -100,3 +102,23 @@ def test_render_config_is_commented(repo_with_benchmark):
 def test_default_tag_is_a_short_date_slug():
     tag = cli_init.default_tag()
     assert tag.isalnum() and tag.islower() and 3 <= len(tag) <= 6
+
+
+@pytest.mark.parametrize(
+    ("year", "month", "day", "want"),
+    [
+        (2026, 9, 6, "sep6"),
+        # Day 30: a naive `.replace("0", "", 1)` on "jan30" strips the first
+        # "0" anywhere in the string and corrupts this to "jan3" — pin the
+        # actual string so that regression cannot creep back in silently.
+        (2026, 1, 30, "jan30"),
+    ],
+)
+def test_default_tag_matches_the_date_exactly(monkeypatch, year, month, day, want):
+    class FrozenDatetime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(year, month, day)
+
+    monkeypatch.setattr(cli_init.dt, "datetime", FrozenDatetime)
+    assert cli_init.default_tag() == want
