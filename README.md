@@ -151,8 +151,10 @@ flight:
 | `report` | Summarizes `results.tsv`: counts by status, cumulative speedup as the **product** of every kept score, largest individual wins. |
 | `version` | The installed distribution version, or the git commit for a checkout, marked `dirty` when the tree had uncommitted changes. |
 
-Every command accepts `-C <dir>` to operate on another repository without
-changing the process's working directory.
+Every command except `version` accepts `-C <dir>` to operate on another
+repository without changing the process's working directory. (`version`
+reports which build of the harness is running, which is not a property of any
+repository, so the flag would be meaningless there.)
 
 ## Where run state lives
 
@@ -230,16 +232,20 @@ any wall-clock measurement does):
 | join once instead of `+=` | 14.553 ms | 10.767 ms | −26.02% | <0.0001 | 0.7398 | `KEEP` (`improved`) |
 
 One detail that matters more than it looks: getting a *real* separation here
-took a benchmark input with at least one long token in it (a hash, an id, a
-base64 blob — the kind of thing real log lines actually contain), not only
-short natural-language words. CPython's own interpreter already optimizes
-`s = s + ch` in place when `s`'s refcount is 1, so short-string concatenation
-in a tight loop is cheap in practice regardless of the "obviously quadratic"
-source code — the bug is real, but it only costs something once a single
-token is long enough for the quadratic term to matter. `testdata/demo` picks
-its benchmark input accordingly; a repository you point this at may need the
-same care if its first benchmark shows no separation between two versions you
-know behave differently.
+took a benchmark input with at least one multi-kilobyte token in it — a
+base64 blob, an embedded payload, a serialized trace — not only short
+natural-language words, and not even a short identifier. CPython's own
+interpreter already optimizes `s = s + ch` in place when `s`'s refcount is 1,
+so short-string concatenation in a tight loop is cheap in practice regardless
+of the "obviously quadratic" source code. Measured directly against token
+length: a UUID (36 chars) makes the "optimized" version *lose* by +4.4%; a
+SHA-256 hex digest (64 chars) is noise at -1.4%; separation only becomes real
+in the hundreds of characters and clearly dominant in the thousands (-8.8% at
+256, -22.3% at 1024, -27.3% at the 6000-character token this demo ships with).
+The bug is real, but it only costs something once a single token is roughly
+kilobyte-scale — `testdata/demo` picks its benchmark input accordingly; a
+repository you point this at may need the same care if its first benchmark
+shows no separation between two versions you know behave differently.
 
 ## What the harness enforces
 
