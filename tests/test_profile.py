@@ -1,5 +1,6 @@
 import json
 import pstats
+from pathlib import Path
 
 import pytest
 
@@ -141,8 +142,14 @@ def test_format_mem_reports_the_peak_when_the_plugin_recorded_one(tmp_path):
 
 
 def test_format_mem_relativizes_to_the_repo_root(tmp_path):
-    root = tmp_path / "repo"
-    (root / "pkg").mkdir(parents=True)
+    # A short, fixed root — NOT built from tmp_path. tmp_path carries a long,
+    # unpredictable prefix (pytest-of-<user>/pytest-NNN/<test-name>/...) that
+    # can itself exceed the display width, so an un-relativized absolute path
+    # would get truncated away by chance and "root not in text" would pass
+    # for the wrong reason even with relativization removed entirely. A short
+    # root that comfortably fits the width means it can only be absent from
+    # the output because it was actually stripped.
+    root = Path("/repo")
     abs_file = root / "pkg" / "mod.py"
     path = tmp_path / "mem.json"
     path.write_text(
@@ -154,9 +161,20 @@ def test_format_mem_relativizes_to_the_repo_root(tmp_path):
 
 
 def test_format_mem_elides_long_paths_at_a_separator_not_mid_component(tmp_path):
-    root = tmp_path / "repo"
-    nested = root / "src" / "very" / "deeply" / "nested" / "package"
-    nested.mkdir(parents=True)
+    # A short, fixed root (see above) plus long parent-directory components,
+    # so the *relativized* display path alone is long enough to force
+    # elision — a blind `site[-60:]` on this path lands inside a directory
+    # name, not on a "/" boundary, which the previous fixture's short
+    # filename could never expose (the character immediately before a short
+    # filename always survives a tail slice unchanged, bug or no bug).
+    root = Path("/repo")
+    nested = (
+        root
+        / "src"
+        / "very_deeply_nested_package_directory"
+        / "another_long_subpackage_name"
+        / "yet_another_nested_module_dir"
+    )
     abs_file = nested / "module_with_a_reasonably_long_name.py"
     path = tmp_path / "mem.json"
     path.write_text(
@@ -166,11 +184,11 @@ def test_format_mem_elides_long_paths_at_a_separator_not_mid_component(tmp_path)
     site_line = next(
         ln for ln in text.splitlines() if "module_with_a_reasonably_long_name.py" in ln
     )
-    # The filename must appear whole, immediately preceded by a path
-    # separator (or the "..." elision marker) — never truncated mid-name,
-    # the way a blind `site[-60:]` slice would.
-    idx = site_line.index("module_with_a_reasonably_long_name.py")
-    assert site_line[idx - 1] == "/"
+    # Elision must fall back to "...", dropping the parent directories that
+    # do not fit, rather than blindly slicing the last 60 characters of the
+    # raw relative path — which would cut into "yet_another_nested_module_dir"
+    # mid-word and never produce this exact, whole-component result.
+    assert site_line.startswith(".../module_with_a_reasonably_long_name.py:42")
 
 
 def test_profile_refuses_without_a_config(git_repo, capsys):
