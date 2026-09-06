@@ -76,21 +76,11 @@ def options(run, monkeypatch, measure_fn=None, skip_gates=True):
                 (), "", "", 0, False, 0.0
             ),
         )
-    monkeypatch.setattr(
-        "autor3search_python.gitx.head_commit",
-        lambda d: (
-            base.measure_commit
-            if str(d).endswith(state.WORKTREE_NAME)
-            else __import__("subprocess")
-            .run(
-                ["git", "rev-parse", "--short=7", "HEAD"],
-                cwd=str(d),
-                capture_output=True,
-                text=True,
-            )
-            .stdout.strip()
-        ),
-    )
+    # No gitx.head_commit patch here on purpose: the fixture builds a REAL
+    # linked worktree, so the worktree-integrity check can exercise real git
+    # and actually observe a mismatch when there is one. Faking it to always
+    # equal base.measure_commit would silently disable that check in every
+    # test that goes through this helper.
     return pipeline.Options(
         root=repo,
         state_dir=sd,
@@ -119,7 +109,11 @@ def test_in_scope_edit_passes_the_scope_gate(run, monkeypatch):
     (repo / "pkg" / "mod.py").write_text("def work():\n    return 4950\n")
     commit_all(repo, "in scope")
     result, _ = pipeline.evaluate(options(run, monkeypatch))
-    assert result.reason is not verdict.Reason.SCOPE
+    # The default fake_measure() reports identical base/candidate values, so an
+    # in-scope edit that clears every gate runs all the way to a real DISCARD
+    # verdict — not merely "not SCOPE", which would also pass on a crash.
+    assert result.status is verdict.Status.DISCARD
+    assert result.reason is verdict.Reason.NO_IMPROVEMENT
 
 
 @pytest.mark.parametrize(
@@ -156,7 +150,10 @@ def test_harness_owned_files_are_not_scope_violations(run, monkeypatch):
     (repo / "run.log").write_text("x\n")
     commit_all(repo, "harness output")
     result, _ = pipeline.evaluate(options(run, monkeypatch))
-    assert result.reason is not verdict.Reason.SCOPE
+    # As above: nothing else changed, so a correct exemption runs all the way
+    # to a real DISCARD verdict, not just "any non-SCOPE outcome".
+    assert result.status is verdict.Status.DISCARD
+    assert result.reason is verdict.Reason.NO_IMPROVEMENT
 
 
 # --- config integrity -----------------------------------------------------
@@ -224,7 +221,11 @@ def test_an_unfrozen_file_may_be_added(run, monkeypatch):
     opts = options(run, monkeypatch)
     opts.cfg = config.Config(**{**opts.cfg.__dict__, "unfreeze": ("tests/test_extra.py",)})
     result, _ = pipeline.evaluate(opts)
-    assert result.reason is not verdict.Reason.NEW_TEST_FILE
+    # Nothing else changed, so a correct exemption runs all the way to a real
+    # DISCARD verdict, not just "any non-NEW_TEST_FILE outcome" (which a crash
+    # would also satisfy).
+    assert result.status is verdict.Status.DISCARD
+    assert result.reason is verdict.Reason.NO_IMPROVEMENT
 
 
 def test_a_symlinked_frozen_file_is_a_fail_not_a_crash(run, monkeypatch, tmp_path):
@@ -360,6 +361,99 @@ def test_a_measurement_failure_is_a_crash_not_an_exception(run, monkeypatch):
 
     result, _ = pipeline.evaluate(options(run, monkeypatch, measure_fn=boom))
     assert result.status is verdict.Status.CRASH
+
+
+# --- anchor invariants: commit vs measure_commit --------------------------
+#
+# Both of the following exercise a property invisible to every test above: as
+# long as base.commit == base.measure_commit (true everywhere until a KEEP
+# happens), the scope gate and the worktree-integrity check cannot be told
+# apart by which of the two fields they read. These force a real divergence —
+# a real KEEP, through real git — so the anchor actually matters.
+
+
+def test_scope_gate_still_catches_an_out_of_scope_edit_after_a_keep_advances_the_baseline(
+    run, monkeypatch
+):
+    """The scope gate must diff against base.commit (frozen), not
+    base.measure_commit (which moves on every KEEP). Anchoring to the moving
+    pointer would give an out-of-scope edit exactly one eval to be caught: the
+    next KEEP folds it into "already accepted" state and the gate never looks
+    at it again, silently disabling scope enforcement for the rest of the run.
+    """
+    repo, sd, base = run
+    (repo / "elsewhere.py").write_text("x = 1\n")
+    commit_all(repo, "out of scope")
+
+    # 1. The violation is caught immediately, as it always was.
+    result, _ = pipeline.evaluate(options(run, monkeypatch))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "elsewhere.py" in result.message
+
+    # 2. Force a KEEP through with scope broadened to "everything", so a real
+    #    optimization can be measured and banked even though the out-of-scope
+    #    file is still sitting in the tree. This is what advances
+    #    measure_commit PAST the commit containing the violation, and
+    #    re-points the (real) pinned worktree there.
+    (repo / "pkg" / "mod.py").write_text("def work():\n    return 4950\n")
+    commit_all(repo, "faster, with the violation still present")
+    permissive_cfg = config.Config(
+        **{
+            **config.load(repo / ".autor3search" / "config.toml").__dict__,
+            "scope": ("...",),
+            "gates": config.Gates(False, False),
+        }
+    )
+    monkeypatch.setattr(
+        "autor3search_python.runner.Runner.pytest_gate",
+        lambda self: __import__("autor3search_python.runner", fromlist=["Result"]).Result(
+            (), "", "", 0, False, 0.0
+        ),
+    )
+    keep_result, _ = pipeline.evaluate(
+        pipeline.Options(
+            root=repo,
+            state_dir=sd,
+            cfg=permissive_cfg,
+            base=base,
+            measure_fn=fake_measure(2.0, 1.0, n=8),
+        )
+    )
+    assert keep_result.status is verdict.Status.KEEP  # sanity: the KEEP really happened
+
+    # 3. Evaluate again with the ORIGINAL restrictive scope and nothing new
+    #    committed. The violation never left the tree; a correct
+    #    implementation re-validates the FULL diff from base.commit on every
+    #    eval and must catch it again. An implementation anchored to
+    #    measure_commit would see an empty diff here (measure_commit now IS
+    #    HEAD) and let it through.
+    result, _ = pipeline.evaluate(options(run, monkeypatch))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "elsewhere.py" in result.message
+
+
+def test_no_spurious_baseline_tampered_on_the_eval_after_a_keep(run, monkeypatch):
+    """The worktree-integrity check must compare against base.measure_commit
+    (the advancing pointer), not base.commit (the frozen anchor). The pinned
+    worktree is legitimately re-pointed after every KEEP, so anchoring to the
+    frozen commit would report baseline_tampered on the very next eval after
+    any successful optimization — breaking the tool permanently the moment it
+    first succeeds.
+    """
+    repo, sd, base = run
+    (repo / "pkg" / "mod.py").write_text("def work():\n    return 4950\n")
+    commit_all(repo, "faster")
+
+    keep_result, _ = pipeline.evaluate(
+        options(run, monkeypatch, measure_fn=fake_measure(2.0, 1.0, n=8))
+    )
+    assert keep_result.status is verdict.Status.KEEP  # sanity: worktree re-pointed for real
+
+    result, _ = pipeline.evaluate(options(run, monkeypatch, measure_fn=fake_measure(1.0, 1.0, n=8)))
+    assert result.reason is not verdict.Reason.BASELINE_TAMPERED
+    assert result.status is verdict.Status.DISCARD
 
 
 def test_is_dependency_file():
