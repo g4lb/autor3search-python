@@ -62,6 +62,36 @@ def test_a_second_claim_in_another_process_is_refused(tmp_path):
         holder.wait()
 
 
+def test_a_refused_claim_leaves_the_holders_pid_file_intact(tmp_path):
+    """A refused claim must never unlink the live holder's pid file: that
+    blinds eval_running and lets a later claim take a fresh inode while the
+    holder is still running -- two evals against the same pinned worktree."""
+    d = tmp_path / "state"
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(f"""
+            import os, time
+            from autor3search_python import runstop
+            with runstop.claim_eval({str(d)!r}, os.getpid()):
+                print("held", flush=True)
+                time.sleep(20)
+        """),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        with pytest.raises(runstop.StopError, match="already running"), runstop.claim_eval(d, 1234):
+            pass
+        assert runstop.eval_running(d) == (holder.pid, True)
+    finally:
+        holder.kill()
+        holder.wait()
+
+
 def test_a_stale_pid_file_does_not_report_a_live_eval(tmp_path):
     """A pid file left by a SIGKILLed eval is a corpse, not a running process."""
     d = tmp_path / "state"

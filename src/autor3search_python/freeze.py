@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import posixpath
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -38,9 +39,14 @@ def _hash(data: bytes) -> str:
 
 def _safe_join(root: Path, rel: str) -> Path:
     """Join rel onto root, refusing anything that would escape it."""
-    if posixpath.isabs(rel) or (len(rel) > 1 and rel[1] == ":"):
+    # Backslashes must be normalized to "/" BEFORE the absolute-path check:
+    # isabs() only recognizes the leading-slash form, so "\etc\passwd" reads as
+    # relative, and Path.__truediv__ then discards root entirely once the
+    # right-hand operand turns out to be absolute after normalization.
+    normalized = rel.replace("\\", "/")
+    if posixpath.isabs(normalized) or (len(normalized) > 1 and normalized[1] == ":"):
         raise FreezeError(f"frozen path {rel!r} must be relative")
-    clean = posixpath.normpath(rel.replace("\\", "/"))
+    clean = posixpath.normpath(normalized)
     if clean == ".." or clean.startswith("../"):
         raise FreezeError(f"frozen path {rel!r} escapes the repository root")
     return root / clean
@@ -52,6 +58,35 @@ def _is_symlink(path: Path) -> bool:
         return path.is_symlink()
     except OSError:
         return False
+
+
+def _escapes_root(root: Path, path: Path) -> bool:
+    """Whether path's fully-resolved location falls outside root.
+
+    _is_symlink only asks about the final path component. A symlinked
+    ancestor directory walks straight past that check: the path itself looks
+    like an ordinary file, but the directory it lives in points elsewhere, so
+    every read or write through it lands wherever that directory really is.
+    realpath resolves every symlink in the chain, not just the last one.
+    """
+    root_real = os.path.realpath(root)
+    path_real = os.path.realpath(path)
+    return path_real != root_real and not path_real.startswith(root_real + os.sep)
+
+
+def _ensure_contained(root: Path, path: Path, rel: str, verb: str) -> None:
+    """Raise SymlinkError if path resolves outside root through some ancestor.
+
+    Must be called before any read or write through `path`: a SymlinkError
+    raised after the bytes have already landed outside the repository is
+    worthless.
+    """
+    if _escapes_root(root, path):
+        raise SymlinkError(
+            f"{verb} {rel}: resolves outside {root} through a symlinked ancestor "
+            f"directory; refusing to touch it, which could reach a file outside "
+            f"the repository"
+        )
 
 
 @dataclass
@@ -98,6 +133,7 @@ def snapshot(repo_root: str | Path, store_dir: str | Path, files: Sequence[str])
                 f"snapshot {rel}: symlinked test files are unsupported because the harness "
                 f"cannot guarantee that restoring them stays inside the repository"
             )
+        _ensure_contained(repo_root, src, rel, "snapshot")
         try:
             data = src.read_bytes()
         except OSError as e:
@@ -125,13 +161,20 @@ def restore(repo_root: str | Path, store_dir: str | Path, m: Manifest) -> list[s
                 f"restore {rel}: a frozen test file was replaced by a symlink; refusing to "
                 f"write through it, which could reach a file outside the repository"
             )
+        # Before any read or write through dst: a symlinked ANCESTOR directory
+        # (not dst itself) passes the check above but still writes through to
+        # wherever that directory really points.
+        _ensure_contained(repo_root, dst, rel, "restore")
         try:
             if dst.read_bytes() == want:
                 continue
         except OSError:
             pass  # missing or unreadable: rewrite it
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(want)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(want)
+        except OSError as e:
+            raise FreezeError(f"restore {rel}: {e}") from e
         changed.append(rel)
     return changed
 
@@ -142,9 +185,10 @@ def verify(repo_root: str | Path, m: Manifest) -> list[str]:
     changed: list[str] = []
     for rel in m.sorted_paths():
         path = _safe_join(repo_root, rel)
-        if _is_symlink(path):
+        if _is_symlink(path) or _escapes_root(repo_root, path):
             # At least as suspicious as a deletion. Report it rather than
-            # following the link to read whatever it points at.
+            # following the link (or the symlinked ancestor directory) to
+            # read whatever it actually points at.
             changed.append(rel)
             continue
         try:

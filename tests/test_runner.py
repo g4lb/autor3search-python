@@ -1,6 +1,8 @@
 import sys
 import time
 
+import pytest
+
 from autor3search_python import config, runner
 from autor3search_python.scope import Matcher
 
@@ -52,6 +54,25 @@ def test_timeout_kills_grandchildren(tmp_path):
     assert res.timed_out is True
     time.sleep(8)
     assert not marker.exists(), "a grandchild outlived the timeout"
+
+
+@pytest.mark.slow
+def test_recovery_communicate_is_bounded_when_a_grandchild_escapes_the_group(tmp_path):
+    """A grandchild that calls os.setsid() escapes _kill_group's killpg
+    entirely and, inheriting the pipe fd, can keep it open indefinitely. An
+    unbounded recovery communicate() would then block forever; Runner.run
+    must still return, with timed_out=True, within a bounded wall time."""
+    script = (
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', "
+        "'import os, time; os.setsid(); time.sleep(30)'])\n"
+        "time.sleep(30)\n"
+    )
+    start = time.monotonic()
+    res = runner.Runner(tmp_path, 1).run(sys.executable, "-c", script)
+    elapsed = time.monotonic() - start
+    assert res.timed_out is True
+    assert elapsed < 20, f"run() blocked for {elapsed:.1f}s instead of returning"
 
 
 def test_output_is_capped(tmp_path, monkeypatch):

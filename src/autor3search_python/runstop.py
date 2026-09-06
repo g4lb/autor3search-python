@@ -101,6 +101,7 @@ def claim_eval(state_dir: str | Path, pid: int) -> Iterator[None]:
     d.mkdir(parents=True, exist_ok=True)
     path = d / EVAL_PID_FILE
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+    locked = False
     try:
         if not _try_lock(fd):
             try:
@@ -110,15 +111,21 @@ def claim_eval(state_dir: str | Path, pid: int) -> Iterator[None]:
             raise StopError(
                 f"another autor3search-python eval (pid {other}) is already running for this run"
             )
+        locked = True
         os.ftruncate(fd, 0)
         os.pwrite(fd, f"{pid}\n".encode(), 0)
         yield
     finally:
-        # Remove before closing: closing drops the lock, and a concurrent
-        # eval_running that acquired it in between would otherwise read a pid
-        # file this process is about to delete.
-        with contextlib.suppress(OSError):
-            path.unlink(missing_ok=True)
+        # Only the process that actually took the lock may remove the file.
+        # A refused claim never reaches here with locked=True, so it can never
+        # unlink the live holder's pid file, blind eval_running, and let a
+        # later claim take a fresh inode while the holder is still running.
+        if locked:
+            # Remove before closing: closing drops the lock, and a concurrent
+            # eval_running that acquired it in between would otherwise read a
+            # pid file this process is about to delete.
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
         os.close(fd)
 
 

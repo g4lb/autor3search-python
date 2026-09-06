@@ -69,6 +69,49 @@ def test_restore_refuses_to_write_through_a_symlink(trees, tmp_path):
     assert outside.read_text() == "untouched\n"
 
 
+def test_restore_refuses_a_symlinked_ancestor_directory(trees, tmp_path):
+    """_is_symlink only asks about the final path component. A symlinked
+    ancestor directory (the parent of the frozen file, not the file itself)
+    walks straight past that check and writes through to wherever it points."""
+    repo, store = trees
+    m = freeze.snapshot(repo, store, ["tests/test_a.py"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "test_a.py").write_text("untouched\n")
+    import shutil
+
+    shutil.rmtree(repo / "tests")
+    (repo / "tests").symlink_to(outside)
+    with pytest.raises(freeze.SymlinkError):
+        freeze.restore(repo, store, m)
+    assert (outside / "test_a.py").read_text() == "untouched\n"
+
+
+def test_snapshot_refuses_a_symlinked_ancestor_directory(trees, tmp_path):
+    repo, store = trees
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "test_x.py").write_text("x = 1\n")
+    (repo / "tests" / "linked").symlink_to(outside)
+    with pytest.raises(freeze.SymlinkError):
+        freeze.snapshot(repo, store, ["tests/linked/test_x.py"])
+
+
+def test_verify_reports_a_symlinked_ancestor_as_changed(trees, tmp_path):
+    """A symlinked ancestor lets restore write through to an outside file that
+    then hashes identical to the frozen copy; verify must not call that clean."""
+    repo, store = trees
+    m = freeze.snapshot(repo, store, ["tests/test_a.py"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "test_a.py").write_bytes((repo / "tests" / "test_a.py").read_bytes())
+    import shutil
+
+    shutil.rmtree(repo / "tests")
+    (repo / "tests").symlink_to(outside)
+    assert freeze.verify(repo, m) == ["tests/test_a.py"]
+
+
 def test_verify_reports_edited_deleted_and_symlinked(trees, tmp_path):
     repo, store = trees
     (repo / "tests" / "test_b.py").write_text("b\n")
@@ -82,7 +125,16 @@ def test_verify_reports_edited_deleted_and_symlinked(trees, tmp_path):
     assert freeze.verify(repo, m) == ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"]
 
 
-@pytest.mark.parametrize("bad", ["../escape.py", "/etc/passwd", "a/../../escape.py"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../escape.py",
+        "/etc/passwd",
+        "a/../../escape.py",
+        "\\etc\\passwd",
+        "..\\..\\escape.py",
+    ],
+)
 def test_manifest_paths_that_escape_the_root_are_refused(trees, bad):
     """Manifest entries come off disk, so they are untrusted input that restore writes through."""
     repo, store = trees

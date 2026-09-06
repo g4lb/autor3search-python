@@ -32,7 +32,8 @@ def test_state_dir_is_out_of_tree_and_keyed_by_repo(tmp_path, state_home):
     da, db = state.state_dir(a, "t"), state.state_dir(b, "t")
     assert da != db
     assert state_home in da.parents
-    assert tmp_path not in [da, *da.parents] or state_home in da.parents
+    assert da.name == "t"
+    assert len(da.parent.name) == 16  # sha256-of-repo-path key, truncated
 
 
 def test_state_dir_is_stable_across_path_spellings(tmp_path):
