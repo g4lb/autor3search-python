@@ -20,8 +20,9 @@ def test_directory_spellings_are_equivalent(pattern):
     assert not m.match("srcextra/mod.py")
 
 
-def test_non_recursive_matches_only_direct_children():
-    m = Matcher(["./src"])
+@pytest.mark.parametrize("pattern", ["./src", "src"])
+def test_non_recursive_matches_only_direct_children(pattern):
+    m = Matcher([pattern])
     assert m.match("src/mod.py")
     assert not m.match("src/pkg/mod.py")
 
