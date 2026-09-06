@@ -6,10 +6,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def state_home(tmp_path, monkeypatch):
-    """Point run state at a tmpdir so the developer's real cache is never written."""
-    home = tmp_path / "state-home"
-    home.mkdir()
+def state_home(tmp_path_factory, monkeypatch):
+    """Point run state at a tmpdir so the developer's real cache is never written.
+
+    Built from `tmp_path_factory` rather than `tmp_path`: pytest names `tmp_path`
+    after the test's own node id (truncated to 30 characters), so a state
+    directory nested under it can echo arbitrary substrings of the test's name
+    back through the CLI — e.g. a test asserting a word never reaches stdout
+    would trip over that same word sitting in its own tmp dir name. A
+    `tmp_path_factory` directory is still fresh and isolated per test, just not
+    named after it.
+    """
+    home = tmp_path_factory.mktemp("state-home")
     monkeypatch.setenv("AUTOR3SEARCH_PYTHON_STATE_HOME", str(home))
     return home
 
