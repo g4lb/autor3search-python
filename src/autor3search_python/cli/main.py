@@ -37,7 +37,10 @@ def usage(stream) -> None:
     for name, blurb in COMMANDS.items():
         print(f"  {name.ljust(width)}  {blurb}", file=stream)
     print("", file=stream)
-    print("every command accepts -C <dir> to run against another repository", file=stream)
+    print(
+        "every command except 'version' accepts -C <dir> to run against another repository",
+        file=stream,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
