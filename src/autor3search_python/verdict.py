@@ -154,7 +154,7 @@ def decide(
         status=Status.DISCARD,
         reason=Reason.NO_IMPROVEMENT,
         score=score,
-        message=f"score {score:.4f} ({(score - 1) * 100:+.2f}%), no significant improvement",
+        message=f"score {score:.4f} ({(score - 1) * 100:+.2f}%), no net improvement",
         warnings=warnings,
     )
 
@@ -186,20 +186,24 @@ def _unreachable_alpha_warning(deltas: Sequence[Delta], k: int) -> str | None:
     """
     if not deltas:
         return None
-    worst_n = 0
+    best_n = 0
     alpha = 0.0
     for d in deltas:
         corrected = d.alpha / k
         if stats.min_achievable_p(d.n_base, d.n_cand) < corrected:
             return None  # one benchmark can clear it, which is all a KEEP needs
         n = min(d.n_base, d.n_cand)
-        if n > worst_n:
-            worst_n, alpha = n, d.alpha
+        # The largest sample size seen is the most favourable case: a smaller n
+        # only makes the p-value floor higher, so reporting the maximum is the
+        # strongest true claim this warning can make ("even the best-sampled
+        # benchmark cannot clear the bar").
+        if n > best_n:
+            best_n, alpha = n, d.alpha
     corrected = alpha / k
-    floor = stats.min_achievable_p(worst_n, worst_n)
+    floor = stats.min_achievable_p(best_n, best_n)
     msg = (
         f"no KEEP was reachable: comparing {k} benchmark(s) corrects the significance "
-        f"threshold to {corrected:.5f}, but with {worst_n} rounds per side the test cannot "
+        f"threshold to {corrected:.5f}, but with {best_n} rounds per side the test cannot "
         f"produce a p-value below {floor:.5f} however large the improvement is"
     )
     need = stats.count_for_alpha(corrected)

@@ -135,6 +135,21 @@ def test_compare_all_fails_on_an_empty_intersection():
         benchio.compare_all(benchio.Set(), benchio.Set())
 
 
+def test_compare_significant_uses_the_raw_uncorrected_alpha_it_was_passed():
+    """The cross-module guarantee verdict relies on: `significant` is p < alpha
+    for the alpha `compare` itself was given, not a value the caller derives.
+    The verdict test suite cannot catch a regression here because its own
+    `delta()` helper computes `significant` itself, bypassing `compare`."""
+    base = _set("x", [10.0] * 8)
+    cand = _set("x", [9.0, 9.0, 9.0, 9.0, 9.0, 10.0, 10.0, 10.0])
+    loose = benchio.compare(base, cand, "x", alpha=0.05)
+    strict = benchio.compare(base, cand, "x", alpha=0.001)
+    assert loose.p < 0.05
+    assert loose.significant is True
+    assert not (strict.p < 0.001)
+    assert strict.significant is False
+
+
 def test_compare_all_is_sorted_by_name():
     base, cand = benchio.Set(), benchio.Set()
     for name in ("b", "a"):

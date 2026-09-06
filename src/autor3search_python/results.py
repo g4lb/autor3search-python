@@ -57,7 +57,10 @@ def _truncate(s: str) -> str:
 def append(path: str | Path, row: Row) -> None:
     """Add one row, creating the file with a header when needed."""
     p = Path(path)
-    is_new = not p.exists()
+    try:
+        needs_header = p.stat().st_size == 0
+    except FileNotFoundError:
+        needs_header = True
     line = "\t".join(
         [
             _clean(row.commit),
@@ -69,7 +72,7 @@ def append(path: str | Path, row: Row) -> None:
     )
     try:
         with p.open("a", encoding="utf-8") as f:
-            if is_new:
+            if needs_header:
                 f.write(HEADER + "\n")
             f.write(line + "\n")
             f.flush()

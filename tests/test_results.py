@@ -37,6 +37,17 @@ def test_round_trip(tmp_path):
     assert got == [row()]
 
 
+def test_append_writes_the_header_into_a_preexisting_empty_file(tmp_path):
+    """A file that exists but is empty (touched by hand, or left by a torn write)
+    must still get a header — existence alone is not proof a header was written."""
+    p = tmp_path / "results.tsv"
+    p.write_text("")
+    results.append(p, row())
+    lines = p.read_text().splitlines()
+    assert lines[0] == results.HEADER
+    assert len(results.load(p)) == 1
+
+
 def test_missing_file_is_an_empty_log_not_an_error(tmp_path):
     assert results.load(tmp_path / "absent.tsv") == []
 
