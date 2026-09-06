@@ -1,11 +1,33 @@
-import sys
+from pathlib import Path
 
-from autor3search_python import doctor
+import pytest
+
+from autor3search_python import config, doctor
 from autor3search_python.cli import main as cli_main
+
+_SYSTEM_PYTHON = "/usr/bin/python3"
 
 
 def by_name(findings, name):
     return next(f for f in findings if f.name == name)
+
+
+def label_by_name(out: str, findings) -> dict[str, str]:
+    """Parse the doctor CLI's rendered lines back into {finding name: label}.
+
+    Mirrors the exact layout `cli.doctor.run` writes
+    (`f"{label}  {name.ljust(width)}  {detail}"`), so it fails if the labels
+    or the names they are attached to ever drift apart.
+    """
+    width = max(len(f.name) for f in findings)
+    result = {}
+    for line in out.splitlines():
+        if len(line) <= 6 + width:
+            continue
+        label, name = line[:4], line[6 : 6 + width].strip()
+        if name:
+            result[name] = label
+    return result
 
 
 def test_check_returns_findings_for_the_basics(git_repo):
@@ -80,12 +102,35 @@ def test_a_plain_pure_python_repo_is_ok(tmp_path):
     assert doctor.check_compiled_extensions(tmp_path).severity is doctor.Severity.OK
 
 
+@pytest.mark.skipif(
+    not Path(_SYSTEM_PYTHON).exists(), reason="no system python3 to check against here"
+)
 def test_missing_pytest_benchmark_is_a_failure():
-    """Without it nothing can be measured at all."""
-    f = doctor.check_benchmark_tooling(sys.executable)
-    assert f.severity in (doctor.Severity.OK, doctor.Severity.FAIL)
-    if f.severity is doctor.Severity.FAIL:
-        assert "pip install" in f.detail
+    """Without it nothing can be measured at all.
+
+    Deterministic, not tautological: /usr/bin/python3 is the platform system
+    interpreter, never the one this project's own venv installs
+    pytest-benchmark into, so this always exercises the FAIL branch rather
+    than merely tolerating either outcome.
+    """
+    f = doctor.check_benchmark_tooling(_SYSTEM_PYTHON)
+    assert f.severity is doctor.Severity.FAIL
+    assert "pip install" in f.detail
+
+
+def test_benchmark_tooling_check_survives_unexpected_child_output(monkeypatch):
+    """A child process whose stdout doesn't carry two tokens must not crash
+    doctor with an IndexError — it should be reported, not raised."""
+
+    class _FakeCompleted:
+        returncode = 0
+        stdout = "only-one-token\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _FakeCompleted())
+    f = doctor.check_benchmark_tooling("fake-python")
+    assert f.severity is doctor.Severity.WARN
+    assert "unexpected output" in f.detail
 
 
 def test_doctor_command_always_exits_zero(tmp_path, capsys):
@@ -94,7 +139,31 @@ def test_doctor_command_always_exits_zero(tmp_path, capsys):
     assert "git repo" in capsys.readouterr().out
 
 
-def test_doctor_output_marks_severities(git_repo, capsys):
+def test_doctor_output_labels_a_warning_and_an_ok_finding_distinctly(git_repo, capsys):
+    (git_repo / "pyproject.toml").write_text('[tool.pytest.ini_options]\naddopts = "--cov=pkg"\n')
+    findings = doctor.check(git_repo)
     cli_main.main(["doctor", "-C", str(git_repo)])
-    out = capsys.readouterr().out
-    assert "OK" in out
+    labels = label_by_name(capsys.readouterr().out, findings)
+    assert labels["git repo"] == "OK  "
+    assert labels["coverage"] == "WARN"
+
+
+def test_doctor_output_labels_a_failure(tmp_path, capsys):
+    findings = doctor.check(tmp_path)
+    cli_main.main(["doctor", "-C", str(tmp_path)])
+    labels = label_by_name(capsys.readouterr().out, findings)
+    assert labels["git repo"] == "FAIL"
+
+
+def test_doctor_uses_the_configured_interpreter(git_repo, capsys):
+    """cfg.python, when set, is the interpreter that will actually run the
+    benchmarks — doctor must check tooling against it, not against whatever
+    interpreter happens to be running the harness."""
+    cfg_dir = git_repo / ".autor3search"
+    cfg_dir.mkdir()
+    bogus = "/nonexistent/python-for-doctor-wiring-test"
+    (cfg_dir / "config.toml").write_text(f'python = "{bogus}"\n')
+    assert config.load(cfg_dir / "config.toml").python == bogus  # sanity on the fixture itself
+
+    cli_main.main(["doctor", "-C", str(git_repo)])
+    assert bogus in capsys.readouterr().out
