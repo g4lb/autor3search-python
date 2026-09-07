@@ -57,16 +57,17 @@ def test_outside_a_repository_is_a_failure(tmp_path):
     assert by_name(doctor.check(tmp_path), "git repo").severity is doctor.Severity.FAIL
 
 
-def test_doctor_reports_windows_as_unsupported(monkeypatch):
+def test_doctor_reports_windows_as_supported_with_its_one_difference(monkeypatch):
     """This machine cannot actually run Windows, so this fakes only the branch
     condition (os.name) and asserts our own logic fires — not real Windows
-    behaviour. It must name the three concrete gaps, not just say
-    "unsupported": the concurrency guard, `stop --force`, and the timeout's
-    grandchild leak. A weak `"FAIL" in detail` or `"OK" not in detail`
-    assertion would still pass if the severity itself were wrong (see the
-    project history of an `assert "OK" in out` that passed when every
-    severity label was remapped to "OK"), so the severity is checked by
-    identity, not string-sniffed out of the detail.
+    behaviour. The three gaps it used to name are implemented now (a real
+    claim lock, a job object per benchmark tree, a -force that reaches the
+    eval), so a FAIL here would be a lie in the opposite direction; what is
+    left is the one real difference, and the checks this platform cannot make.
+    A weak `"WARN" in detail` assertion would still pass if the severity itself
+    were wrong (see the project history of an `assert "OK" in out` that passed
+    when every severity label was remapped to "OK"), so the severity is
+    checked by identity, not string-sniffed out of the detail.
 
     Patches doctor._POSIX rather than the real os.name: os.name also drives
     which concrete Path class pathlib hands back, so patching it globally on
@@ -80,20 +81,18 @@ def test_doctor_reports_windows_as_unsupported(monkeypatch):
     monkeypatch.setattr(doctor, "_POSIX", False)
     f = doctor.check_platform()
     assert f.name == "platform"
-    assert f.severity is doctor.Severity.FAIL
-    assert "claim_eval always reports success" in f.detail
-    assert "stop --force" in f.detail and "cannot signal" in f.detail
-    assert "grandchildren keep running" in f.detail
-    assert "Do not trust a number produced here." in f.detail
+    assert f.severity is doctor.Severity.WARN
+    assert "stop --force" in f.detail and "immediate" in f.detail
+    assert "load average" in f.detail and "governor" in f.detail
+    assert "Do not trust a number produced here." not in f.detail
 
 
-def test_doctor_command_still_exits_zero_when_platform_check_fails(monkeypatch, tmp_path, capsys):
-    """doctor reports, it never gates — even a FAIL-severity platform check
-    must not change the command's own exit code."""
-    monkeypatch.setattr(doctor, "_POSIX", False)
+def test_doctor_command_still_exits_zero_when_a_check_fails(tmp_path, capsys):
+    """doctor reports, it never gates — a FAIL-severity check (here: not a git
+    repository at all) must not change the command's own exit code."""
     assert cli_main.main(["doctor", "-C", str(tmp_path)]) == 0
     labels = label_by_name(capsys.readouterr().out, doctor.check(tmp_path))
-    assert labels["platform"] == "FAIL"
+    assert labels["git repo"] == "FAIL"
 
 
 def test_coverage_in_addopts_is_warned_about(tmp_path):
