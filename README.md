@@ -263,6 +263,8 @@ process).
 | Edit a source file outside `scope` | `scope_violation` — checked before anything is even restored or compiled |
 | Edit `.autor3search/config.toml` | `config_changed` — its sha256 is pinned at `baseline` time; the scope gate does not even look at it, because a changed config is a different failure |
 | Edit a dependency file (`pyproject.toml`, `setup.py`/`.cfg`, `requirements*.txt`, `constraints*.txt`, `poetry.lock`, `uv.lock`, `pdm.lock`, `Pipfile[.lock]`) | Rejected outright regardless of `scope` — a dependency swap is a supply-chain decision for a human, and it changes *what* is measured, not just how fast it runs |
+| Edit a pytest config file (`pytest.ini`, `tox.ini`; `pyproject.toml` and `setup.cfg` are already above) | Rejected outright regardless of `scope` — pytest reads them, so one `addopts` line changes what is collected, how it runs and how it is *timed*. `--benchmark-timer=` pointing at a fake clock turned a comment-only edit into a 90% "improvement"; `-k` narrowed collection until a broken implementation walked past the correctness gate |
+| Add `sitecustomize.py` or `usercustomize.py` at the repository root | Rejected outright regardless of `scope` — CPython's `site` imports them at interpreter startup for anything on `sys.path`, and measurement has to put the tree root there. Such a file runs arbitrary code inside every gate and both bench sides before any of them begin, and on the candidate side only |
 | Edit the pinned baseline worktree in place, to make the baseline look slow | Detected (not proven-impossible — see [Limitations](#limitations)) when the recorded `measure_commit` no longer matches the worktree's actual HEAD: `baseline_tampered` |
 
 ## Scoring
@@ -364,7 +366,9 @@ def test_my_function_benchmark(benchmark):
 Any test function (`test_*` or `*_test`, including inside a `Test*` class)
 that takes the `benchmark` fixture, or carries `@pytest.mark.benchmark(...)`,
 is discovered automatically. `pytest-benchmark` must be installed in the
-environment that will run the benchmarks — `doctor` checks for it.
+environment that will run the benchmarks, alongside `autor3search-python`
+itself, which `profile` loads as a plugin inside that same interpreter —
+`doctor` checks for all three.
 
 One warning worth taking seriously: benchmarking a cold, rarely-exercised
 path produces numbers that are entirely real and entirely useless — a 90%

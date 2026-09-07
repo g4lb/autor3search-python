@@ -17,7 +17,7 @@ import fnmatch
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import IO
 
 from autor3search_python import (
@@ -55,6 +55,34 @@ DEPENDENCY_FILES = frozenset(
 )
 DEPENDENCY_GLOBS = ("requirements*.txt", "constraints*.txt")
 
+# Rejected regardless of scope, for a different reason than a dependency file.
+# pytest reads its own configuration from these, so one addopts line changes
+# what is collected, how it runs and how it is timed — it changes WHAT is being
+# measured rather than how fast the code is. Two demonstrated cheats:
+# `--benchmark-timer=` pointing at a function that divides perf_counter by ten
+# (a comment-only edit then "improves" by 90%), and `-k` narrowing collection
+# so a deliberately broken implementation walks past the correctness gate that
+# is deliberately not switchable.
+#
+# pyproject.toml and setup.cfg are in discover.PYTEST_CONFIG_FILES too, but
+# they are caught as dependency files first and keep that more specific
+# message. The remainder is derived, never re-listed: the whole point of the
+# shared constant is that adding a fifth pytest config file to it closes this
+# gate too, with no second edit to remember.
+MEASUREMENT_CONFIG_FILES = frozenset(discover.PYTEST_CONFIG_FILES) - DEPENDENCY_FILES
+
+# Rejected regardless of scope, and the reason is startup, not pytest.
+# runner.bench_env puts the tree root on PYTHONPATH — it has to, or both sides
+# would import the same installed copy — and CPython's site.py imports
+# `sitecustomize` and `usercustomize` at interpreter startup from anything on
+# sys.path. So a file here runs arbitrary code before pytest, before
+# compileall, before the import gate and before both bench sides, and only on
+# the candidate side, because the pinned worktree sits at the older commit.
+#
+# The fix is to reject the FILE, not the behaviour: -S or -P would also cut
+# site-packages resolution out from under pytest itself.
+STARTUP_HOOK_FILES = frozenset({"sitecustomize.py", "usercustomize.py"})
+
 
 def is_dependency_file(rel: str) -> bool:
     """Only at the repository root: a vendored pyproject.toml deep in a package
@@ -62,6 +90,35 @@ def is_dependency_file(rel: str) -> bool:
     if "/" in rel:
         return False
     return rel in DEPENDENCY_FILES or any(fnmatch.fnmatch(rel, g) for g in DEPENDENCY_GLOBS)
+
+
+def is_measurement_config_file(rel: str) -> bool:
+    """Only at the repository root: pytest reads its config from the rootdir,
+    so a `pytest.ini` inside a package is ordinary data, not a control file."""
+    return "/" not in rel and rel in MEASUREMENT_CONFIG_FILES
+
+
+def is_startup_hook_file(rel: str) -> bool:
+    """Only at the repository root: `site` imports these by top-level module
+    name, so only the copy on the sys.path entry bench_env adds can run."""
+    return "/" not in rel and rel in STARTUP_HOOK_FILES
+
+
+def is_bytecode(rel: str) -> bool:
+    """Compiled bytecode, which the harness's OWN gates leave lying around.
+
+    compile_gate runs compileall and pytest writes bytecode too, so a narrow
+    scope would otherwise start failing every experiment with `scope_violation`
+    from the second eval onward — untracked `__pycache__/*.pyc` that the agent
+    never wrote and cannot remove often enough to matter.
+
+    Skipping these hides nothing: a `.pyc` beside its source is invalidated by
+    CPython against the source's mtime and size, and one under `__pycache__`
+    with no source is not importable at all, because sourceless imports must
+    sit at the source's own location.
+    """
+    p = PurePosixPath(rel)
+    return "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo")
 
 
 def sha256_file(path: str | Path) -> str:
@@ -111,6 +168,8 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
     changed = gitx.changed_since(root, base.commit)
     matcher = scope.Matcher(cfg.scope)
     for rel in changed:
+        if is_bytecode(rel):
+            continue  # the harness's own leavings, not the agent's edit
         if is_dependency_file(rel):
             return (
                 verdict.gate(
@@ -118,6 +177,28 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
                     verdict.Reason.SCOPE,
                     f"{rel} may not be modified: dependency changes are a human decision, "
                     f"not an autonomous one",
+                ),
+                None,
+            )
+        if is_measurement_config_file(rel):
+            return (
+                verdict.gate(
+                    verdict.Status.FAIL,
+                    verdict.Reason.SCOPE,
+                    f"{rel} may not be modified: it is a pytest configuration file, so it "
+                    f"changes what pytest collects, how it runs and how it times — that "
+                    f"changes what is being measured rather than how fast the code is",
+                ),
+                None,
+            )
+        if is_startup_hook_file(rel):
+            return (
+                verdict.gate(
+                    verdict.Status.FAIL,
+                    verdict.Reason.SCOPE,
+                    f"{rel} may not be modified: Python imports it automatically at "
+                    f"interpreter startup, so it runs arbitrary code inside every gate and "
+                    f"every measured process before any of them begin",
                 ),
                 None,
             )

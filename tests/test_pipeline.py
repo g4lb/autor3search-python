@@ -2,7 +2,16 @@ import hashlib
 
 import pytest
 
-from autor3search_python import benchio, config, freeze, gitx, pipeline, state, verdict
+from autor3search_python import (
+    benchio,
+    config,
+    discover,
+    freeze,
+    gitx,
+    pipeline,
+    state,
+    verdict,
+)
 from tests.conftest import git
 
 
@@ -142,6 +151,129 @@ def test_dependency_files_are_rejected_regardless_of_scope(run, monkeypatch, nam
     assert result.status is verdict.Status.FAIL
     assert result.reason is verdict.Reason.SCOPE
     assert name in result.message
+
+
+# --- files that change what is measured -----------------------------------
+#
+# Every test in this section widens scope to the DEFAULT "./..." — what `init`
+# writes and what the reviewer's repository ran. The fixture's narrower
+# "pkg/..." would have the ordinary scope gate reject these root files first,
+# so the tests would stay green with the new gates deleted, proving nothing.
+
+
+def test_every_pytest_config_file_is_rejected_by_one_gate_or_the_other():
+    """ONE list, two modules, and this is the join that keeps them honest.
+
+    doctor scans discover.PYTEST_CONFIG_FILES for coverage in addopts; the
+    scope gate rejects edits to them. The two lists diverged once — doctor knew
+    all four, the gate knew two — and the two the gate did not know were a
+    working route to a fabricated 90% "improvement". Adding a fifth pytest
+    config file to the shared constant must close this gate too, with no second
+    edit to remember.
+    """
+    for name in discover.PYTEST_CONFIG_FILES:
+        assert pipeline.is_dependency_file(name) or pipeline.is_measurement_config_file(name), (
+            f"{name} is a pytest config file doctor knows about but no gate rejects"
+        )
+
+
+def wide_scope(opts):
+    """The default './...' scope: these files are in scope, and rejected anyway."""
+    opts.cfg = config.Config(**{**opts.cfg.__dict__, "scope": ("./...",)})
+    return opts
+
+
+@pytest.mark.parametrize("name", ["pytest.ini", "tox.ini"])
+def test_pytest_config_files_are_rejected_regardless_of_scope(run, monkeypatch, name):
+    """pytest reads these, so an addopts line changes what is collected, how it
+    runs and how it is timed — not how fast the code is.
+
+    `addopts = -k benchmark` is the reviewer's second cheat: it narrows
+    collection until a deliberately broken implementation walks straight past
+    the correctness gate that is deliberately not switchable.
+    """
+    repo, _, _ = run
+    (repo / name).write_text("[pytest]\naddopts = -k benchmark\n")
+    commit_all(repo, "add a pytest config")
+    result, _ = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert name in result.message
+    assert "pytest configuration file" in result.message
+
+
+def test_the_fake_timer_cheat_is_rejected_before_anything_is_measured(run, monkeypatch):
+    """The whole cheat, end to end, as it was actually reproduced on a real repo.
+
+    A comment-only edit to in-scope source, plus a timer that divides
+    perf_counter by ten, plus a pytest.ini pointing --benchmark-timer at it.
+    Every file involved is in scope, non-test and not a dependency, so before
+    the pytest-config gate existed this returned KEEP with score 0.099: a 90%
+    "improvement" from a comment. The measurement stub here would report
+    exactly that 10x win, and it must never be reached.
+
+    Scope is the DEFAULT "./..." on purpose — the reviewer's repository and
+    every repo `init` writes. Under the fixture's narrower "pkg/..." the
+    ordinary scope gate would stop faketimer.py first, and the test would pass
+    while proving nothing about pytest.ini.
+    """
+    repo, _, _ = run
+    source = repo / "pkg" / "mod.py"
+    source.write_text("# a comment, and nothing else changes\n" + source.read_text())
+    (repo / "faketimer.py").write_text(
+        "import time\n\n\ndef t():\n    return time.perf_counter()/10\n"
+    )
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = --benchmark-timer=faketimer.t\n")
+    commit_all(repo, "cheat")
+
+    called = []
+
+    def measure_fn(opts):
+        called.append(opts)
+        return fake_measure(10.0, 1.0, n=8)(opts)
+
+    result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch, measure_fn=measure_fn)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "pytest.ini" in result.message
+    assert m is None
+    assert called == [], "the gate must fire before the measurement, not after it"
+
+
+@pytest.mark.parametrize("name", ["sitecustomize.py", "usercustomize.py"])
+def test_startup_hook_files_are_rejected_regardless_of_scope(run, monkeypatch, name):
+    """site.py imports these at interpreter startup for anything on sys.path,
+    and bench_env puts the tree root there — so this file would run arbitrary
+    code inside every gate and every measured process, on the candidate side
+    only, before any of them begin."""
+    repo, _, _ = run
+    (repo / name).write_text("open('marker', 'w').write('ran')\n")
+    commit_all(repo, "add a startup hook")
+    result, _ = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert name in result.message
+    assert "startup" in result.message
+
+
+def test_stray_bytecode_does_not_trip_a_narrow_scope_gate(run, monkeypatch):
+    """The harness's OWN leavings must not lock a run out of its own tool.
+
+    compile_gate runs compileall and pytest writes bytecode too, both of them
+    outside the fixture's `pkg/...` scope. Counting those untracked .pyc files
+    as agent edits made every experiment after the first return
+    scope_violation, permanently, with nothing the agent could do about it.
+    """
+    repo, _, _ = run
+    cache = repo / "tests" / "__pycache__"
+    cache.mkdir()
+    (cache / "test_mod.cpython-313.pyc").write_bytes(b"\x00\x01\x02")
+    (repo / "tests" / "stray.pyo").write_bytes(b"\x00")
+    (repo / "pkg" / "mod.py").write_text("def work():\n    return 4950\n")
+    commit_all(repo, "in scope, with bytecode lying around")
+    result, _ = pipeline.evaluate(options(run, monkeypatch))
+    assert result.status is verdict.Status.DISCARD
+    assert result.reason is verdict.Reason.NO_IMPROVEMENT
 
 
 def test_harness_owned_files_are_not_scope_violations(run, monkeypatch):

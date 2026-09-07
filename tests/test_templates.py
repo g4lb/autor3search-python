@@ -1,6 +1,6 @@
 import re
 
-from autor3search_python import templates, verdict
+from autor3search_python import pipeline, templates, verdict
 
 
 def test_program_md_exit_code_table_agrees_with_verdict():
@@ -56,3 +56,16 @@ def test_program_md_covers_the_stop_protocol():
     text = templates.program_md()
     assert '"stop_requested": true' in text
     assert "ABORTED" in text
+
+
+def test_program_md_forbids_every_file_the_scope_gate_rejects_outright():
+    """Derived from the constants, not retyped: adding a file to either set
+    must fail here until program.md names it too. The agent cannot read the
+    source of its own judge, so a rule missing from program.md is a rule it
+    can only learn by burning an experiment on it.
+    """
+    text = templates.program_md()
+    for name in sorted(
+        pipeline.DEPENDENCY_FILES | pipeline.MEASUREMENT_CONFIG_FILES | pipeline.STARTUP_HOOK_FILES
+    ):
+        assert name in text, f"{name} is rejected outright but program.md never says so"
