@@ -1,6 +1,9 @@
 # autor3search-python
 
-Autonomous AI-driven performance optimization for any Python repository.
+[![PyPI](https://img.shields.io/pypi/v/autor3search-python?label=pypi)](https://pypi.org/project/autor3search-python/)
+[![ci](https://github.com/g4lb/autor3search-python/actions/workflows/ci.yml/badge.svg)](https://github.com/g4lb/autor3search-python/actions/workflows/ci.yml)
+
+**Autonomous AI-driven performance optimization for any Python repository.**
 
 A coding agent proposes one change at a time; a harness the agent cannot edit
 gates the change for correctness, measures it against a pinned baseline with
@@ -14,19 +17,25 @@ its Go sibling — same design, same guarantees, a different metric source: wher
 the Go harness reads `ns/op` out of `go test -bench`, this one reads per-round
 timings out of [pytest-benchmark](https://pytest-benchmark.readthedocs.io/).
 
-## Status
+> **Status: early but working.** Validated against one real library —
+> [`humanize`](https://github.com/python-humanize/humanize) — where it found and
+> kept a genuine 5.81% win across its 15 benchmarks (hoisting a per-call
+> `import math` out of nine function bodies; `clamp` −23.2%, `apnumber` −14.9%,
+> no regressions). That is one library, not the three the Go original was
+> exercised against, so treat this as a tool that inherited a validated design
+> and has begun earning its own record rather than one that already has it.
+>
+> Every number in this README is a real measurement taken on the machine that
+> wrote it, never an illustration. Where a number would have been guessed, there
+> is no number.
+>
+> The decision procedure — the scoring rules, the Bonferroni correction, the
+> asymmetric regression guard, the four exit codes — is carried over unchanged
+> from the Go original. If you run this against your own project, the harness's
+> `results.tsv` and `report` output are the honest record of what it actually did
+> there; that is rather the point of the whole design.
 
-This is a fresh port. The decision procedure — the scoring rules, the
-Bonferroni correction, the asymmetric regression guard, the four exit codes —
-is carried over unchanged from the Go original, which *has* been exercised
-against real third-party libraries. This Python implementation has not: it has
-367 unit and integration tests, plus 3 end-to-end tests that drive a real
-subprocess `pytest-benchmark` run against a small, purpose-built demo
-repository (below), and nothing more yet. Treat it as a new
-tool that inherited a validated design, not as a tool with its own track
-record. If you run it against a real project, the harness's own `results.tsv`
-and `report` output are the honest record of what it actually did there — that
-is rather the point of the whole design.
+---
 
 ## Start here
 
@@ -36,9 +45,6 @@ everything you need:
 ```bash
 # 1. Install the harness.
 uv tool install autor3search-python   # or: pipx install autor3search-python
-# Not yet published to PyPI — until then, install from a checkout instead:
-#   uv tool install --from /path/to/autor3search-python autor3search-python
-#   pipx install /path/to/autor3search-python
 
 # 2. From the repository you want to optimize:
 autor3search-python init              # discovers benchmarks, writes config + program.md
@@ -139,7 +145,7 @@ flight:
 
 ## Commands
 
-| Command | Behavior |
+| Command | What it does |
 |---|---|
 | `init` | AST-discovers benchmarks, writes `.autor3search/config.toml` + `program.md` + `.gitignore` entries. Refuses to overwrite a config without `-force`. Refuses outright when no benchmarks are found. |
 | `doctor` | Machine fitness. Always exits 0; informational. |
@@ -156,7 +162,7 @@ repository without changing the process's working directory. (`version`
 reports which build of the harness is running, which is not a property of any
 repository, so the flag would be meaningless there.)
 
-## Where run state lives
+### Where run state lives
 
 Everything the agent must not be able to touch — `baseline.json`, the golden
 copies of every frozen file, the pinned detached worktree, the stop sentinel,
@@ -299,7 +305,7 @@ compared to the last thing that was kept" — never "is the tree better than
 when the run started" — and a long run's total progress is the *product* of
 every kept score, which is what `report`'s cumulative speedup computes.
 
-## When the measurement cannot carry the verdict
+### When the measurement cannot carry the verdict
 
 Two warnings appear in `--json` output (as `warnings`) and above `VERDICT:` in
 human output. Neither ever changes the decision; both say the numbers beside
@@ -363,7 +369,7 @@ Python-specific, new in this port:
   underneath it — that is the tool reporting accurately on a question it
   cannot otherwise answer, not a bug to route around.
 
-## Repos with no benchmarks
+### Repos with no benchmarks
 
 `init` refuses outright if it finds none — this tool optimizes what it can
 measure, and does not guess. Add one:
