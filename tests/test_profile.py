@@ -305,6 +305,26 @@ def test_profile_does_not_leak_the_other_passs_env_var(repo, monkeypatch, tmp_pa
     pstats.Stats(str(report.cpu_path))  # the real cpu.prof, not garbage
 
 
+def test_run_profile_refuses_a_symlinked_output_directory(repo, tmp_path):
+    """PROFILE_DIR (`.autor3search/profiles`) is gitignored and nothing else
+    stops an agent from pre-creating it as a symlink. `.autor3search` itself
+    exists here (from `init`), so this exercises the ancestor case: the
+    output directory's own parent is ordinary, but `profiles` underneath it
+    points outside the repository. mkdir(..., exist_ok=True) would not
+    notice — it only checks that the target is a directory — and the unlink
+    and subprocess writes that follow would then reach `outside/` directly.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    profiles_dir = repo / ".autor3search" / "profiles"
+    profiles_dir.symlink_to(outside)
+    cfg = config.load(repo / config.CONFIG_PATH)
+    with pytest.raises(profile.ProfileError, match="symlink"):
+        profile.run_profile(repo, ["tests/test_mod.py::test_w"], cfg)
+    assert not (outside / "cpu.prof").exists()
+    assert not (outside / "mem.json").exists()
+
+
 def test_format_cpu_handles_a_missing_file(tmp_path):
     assert "no CPU profile" in profile.format_cpu(tmp_path / "absent.prof")
 

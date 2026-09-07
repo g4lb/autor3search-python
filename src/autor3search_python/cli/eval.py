@@ -21,7 +21,17 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from autor3search_python import benchio, freeze, gitx, pipeline, results, runstop, state, verdict
+from autor3search_python import (
+    benchio,
+    containment,
+    freeze,
+    gitx,
+    pipeline,
+    results,
+    runstop,
+    state,
+    verdict,
+)
 from autor3search_python.cli import runctx
 from autor3search_python.cli.main import EXIT_USAGE
 
@@ -130,6 +140,19 @@ def run(args: list[str]) -> int:
         print(f"autor3search-python eval: {e}", file=sys.stderr)
         return EXIT_USAGE
 
+    try:
+        # run.log's name is deliberately waved through the scope gate (it is
+        # the harness's own output) and it is gitignored, so nothing else
+        # stops an agent from replacing it with a symlink before this runs.
+        # Opening in append mode would then write this process's own
+        # transcript — which includes gate subprocess stdout verbatim —
+        # through the link to wherever it points, including a file well
+        # outside the repository. Checked immediately before the open below.
+        containment.ensure_contained(ctx.root, log_path, pipeline.RUN_LOG_NAME, "open")
+    except containment.ContainmentError as e:
+        print(f"autor3search-python eval: {e}", file=sys.stderr)
+        return EXIT_USAGE
+
     def on_signal(signum, frame):  # noqa: ARG001
         # Handled rather than died under: pytest runs the benchmark in a child
         # process, and an eval killed without a chance to clean up would leave
@@ -186,6 +209,7 @@ def run(args: list[str]) -> int:
                     status=str(result.status),
                     description=opts.desc,
                 ),
+                root=ctx.root,
             )
             stop = runstop.stop_requested(ctx.state_dir)
             if opts.as_json:

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from autor3search_python import profiling, runner
+from autor3search_python import containment, profiling, runner
 from autor3search_python.config import Config
 
 PROFILE_DIR = ".autor3search/profiles"
@@ -184,8 +184,25 @@ def run_profile(
     """Profile the declared benchmarks, in two passes, and return the summaries."""
     root = Path(root)
     out_dir = root / PROFILE_DIR
+    # PROFILE_DIR is a fixed, gitignored, multi-component path (see cli/init.py)
+    # that the scope gate never has to see change — exactly the shape of thing
+    # nothing else stops an agent from pre-creating as a symlink. mkdir(...,
+    # exist_ok=True) does not notice a symlinked directory already sitting
+    # there (it only checks that the target IS a directory, which a symlink to
+    # one satisfies), and the unlink calls below would then remove and the
+    # subprocess passes below would then write through it, reaching a file
+    # outside the repository. Checked before either happens.
+    try:
+        containment.ensure_contained(root, out_dir, PROFILE_DIR, "profile")
+    except containment.ContainmentError as e:
+        raise ProfileError(str(e)) from e
     out_dir.mkdir(parents=True, exist_ok=True)
     cpu_path, mem_path = out_dir / "cpu.prof", out_dir / "mem.json"
+    for target, name in ((cpu_path, "cpu.prof"), (mem_path, "mem.json")):
+        try:
+            containment.ensure_contained(root, target, f"{PROFILE_DIR}/{name}", "profile")
+        except containment.ContainmentError as e:
+            raise ProfileError(str(e)) from e
     cpu_path.unlink(missing_ok=True)
     mem_path.unlink(missing_ok=True)
 
