@@ -150,7 +150,7 @@ flight:
 | `init` | AST-discovers benchmarks, writes `.autor3search/config.toml` + `program.md` + `.gitignore` entries. Refuses to overwrite a config without `-force`. Refuses outright when no benchmarks are found. |
 | `doctor` | Machine fitness. Always exits 0; informational. |
 | `baseline -tag T` | Creates branch `autor3search-python/T`, freezes files, pins a detached worktree, records the baseline. Refuses a dirty tree and a reused tag. |
-| `profile` | Runs the declared benchmarks under `cProfile` and `tracemalloc`, writes `.autor3search/profiles/{cpu.prof,mem.json}`, prints top hot spots and allocation sites. |
+| `profile` | Runs the declared benchmarks under `cProfile` and `tracemalloc`, writes `.autor3search/profiles/{cpu.prof,mem.json}`, prints top hot spots, per-benchmark peak allocation, and retained allocation sites. |
 | `eval` | One experiment. `--json` prints exactly one JSON object and nothing else. `-desc` sets the `results.tsv` description. Exits 0/1/2/3. |
 | `status` | Read-only: run branch, both commits, worktree, experiment counts by verdict, whether an eval is in flight, whether a stop is pending. `-tag` works from any branch. |
 | `stop` | Writes the graceful-stop request. `-clear` cancels it; `-force` also signals the running eval's process group and reports the resulting repository state without changing it. |
@@ -360,14 +360,38 @@ Python-specific, new in this port:
   the Mann-Whitney layer above it is built to compare distributions of
   typical values. The default is `median`; switch to `min` only knowing what
   you are trading.
-- **`profile`'s allocation section reports memory still retained at the end
-  of the session, not total allocation churn.** It is `tracemalloc`'s own
-  snapshot underneath, and `tracemalloc` cannot report cumulative bytes ever
-  allocated over a run — only what a snapshot finds still live. A benchmark
-  whose allocations are all transient (allocated and freed well before the
-  session ends) will show a real peak-memory figure but an empty site list
-  underneath it — that is the tool reporting accurately on a question it
-  cannot otherwise answer, not a bug to route around.
+- **`profile`'s allocation section reports two different measurements, and
+  neither one is per-line allocation churn.** `tracemalloc` cannot attribute
+  freed allocations to a source line at all — that needs a native allocator
+  hook (e.g. `memray`), which this project does not take a dependency on. So
+  it reports what `tracemalloc` actually can:
+  - **Peak additional traced memory per benchmark.** Before each test,
+    `tracemalloc.reset_peak()` is called; afterward,
+    `tracemalloc.get_traced_memory()` reports the high-water mark reached
+    during that test above its starting level. This is the only one of the
+    two that sees a *transient* allocation's volume — a benchmark that
+    allocates and frees a large structure on every round shows up here even
+    though nothing about it survives to be snapshotted later. It is
+    **process-wide, not filtered to the target repository**, because
+    `tracemalloc.get_traced_memory()` has no such filter: the number
+    includes pytest's and pytest-benchmark's own bookkeeping for that test,
+    not only the benchmark's own allocations. Resetting the peak
+    immediately before the call keeps that overhead scoped to one test
+    rather than accumulating across the whole session, but it does not
+    remove it.
+  - **Retained sites, by source line, from a session-end snapshot.** This is
+    `tracemalloc`'s own snapshot, filtered to the target repository, and it
+    reports blocks still live when the session ended — result objects,
+    caches, leaks. A benchmark whose allocations are entirely transient
+    (freed well before the session ends) legitimately produces an empty
+    site list here; that is not a bug, it is this measurement correctly
+    reporting on a question it cannot otherwise answer. The peak figure
+    above is what covers that case instead.
+
+  Neither figure is "bytes this function allocated": the peak is a
+  process-wide high-water mark that includes test-harness overhead, and the
+  retained sites are a snapshot of what survives, not a running total of
+  everything ever allocated.
 
 ### Repos with no benchmarks
 

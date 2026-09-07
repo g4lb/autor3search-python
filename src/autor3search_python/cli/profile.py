@@ -38,7 +38,7 @@ def run(args: list[str]) -> int:
 
     print("=== CPU ===")
     print(report.cpu_top)
-    print("=== allocation sites ===")
+    print("=== allocation ===")
     print(report.mem_top)
     print()
     print(f"raw CPU profile:    {report.cpu_path}")
