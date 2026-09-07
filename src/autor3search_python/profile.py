@@ -96,6 +96,67 @@ def format_cpu(stats_path: str | Path, limit: int = _TOP, root: str | Path | Non
     return buf.getvalue()
 
 
+def _format_size(num_bytes: int) -> str:
+    return f"{num_bytes / 1024:.1f}K"
+
+
+def _format_test_peaks(test_peaks: dict, limit: int) -> str:
+    """Render the per-benchmark peak-additional-traced-memory table.
+
+    This is the measurement that a session-end snapshot alone cannot give:
+    it sees allocation volume during a benchmark even when every byte of it
+    is freed before the run ends (see format_mem's module-level context and
+    profiling.pytest_runtest_call for why it is process-wide, not filtered
+    to the repository, and therefore not "bytes this function allocated").
+    """
+    header = (
+        "peak additional traced memory during each benchmark (process-wide, not "
+        "filtered to this repository — includes pytest's own overhead):"
+    )
+    if not test_peaks:
+        return f"{header}\n(no per-benchmark peaks recorded — no benchmarks ran)"
+
+    entries = sorted(test_peaks.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    table = [f"{'benchmark':<{_SITE_WIDTH}} {'peak':>{_SIZE_WIDTH}}"]
+    for node_id, peak in entries:
+        name = _elide(str(node_id), _SITE_WIDTH)
+        table.append(f"{name:<{_SITE_WIDTH}} {_format_size(peak):>{_SIZE_WIDTH}}")
+    return "\n".join([header, "", *table])
+
+
+def _format_retained_sites(entries_raw: list, limit: int, root: str | Path | None) -> str:
+    """Render the session-end snapshot's per-line retained-memory table.
+
+    Blocks still live when the session ended — result objects, caches,
+    leaks. It is genuinely useful for exactly those questions, and useless
+    for allocation volume: a transient allocation, however large, is freed
+    before this snapshot is taken and simply will not appear here (see
+    `_format_test_peaks` for the measurement that covers that case instead).
+    """
+    header = [
+        "blocks still allocated when the session ended, by source line "
+        "(retained memory, not total bytes allocated over the run):"
+    ]
+    entries = sorted(entries_raw, key=lambda e: e.get("size", 0), reverse=True)[:limit]
+    if not entries:
+        header.append(
+            "(no allocation sites recorded — transient allocations are freed before "
+            "the session-end snapshot; see the per-benchmark peak table above for "
+            "allocation volume)"
+        )
+        return "\n".join(header)
+
+    root_path = Path(root).resolve() if root is not None else None
+    table = [f"{'site':<{_SITE_WIDTH}} {'size':>{_SIZE_WIDTH}} {'blocks':>{_BLOCKS_WIDTH}}"]
+    for e in entries:
+        site = _display_site(e.get("file", "?"), e.get("line", 0), root_path)
+        table.append(
+            f"{site:<{_SITE_WIDTH}} {_format_size(e.get('size', 0)):>{_SIZE_WIDTH}} "
+            f"{e.get('count', 0):>{_BLOCKS_WIDTH}}"
+        )
+    return "\n".join([*header, "", *table])
+
+
 def format_mem(json_path: str | Path, limit: int = _TOP, root: str | Path | None = None) -> str:
     path = Path(json_path)
     try:
@@ -103,38 +164,9 @@ def format_mem(json_path: str | Path, limit: int = _TOP, root: str | Path | None
     except (OSError, json.JSONDecodeError):
         return f"(no memory profile was written to {path})"
 
-    header: list[str] = []
-    peak = doc.get("peak_bytes")
-    if peak is not None:
-        header.append(f"peak traced memory during the session: {peak / 1024:.1f}K")
-    header.append(
-        "sites below: size of blocks still allocated when the session ended "
-        "(retained memory, not total bytes allocated over the run)"
-    )
-
-    entries = sorted(doc.get("top", []), key=lambda e: e.get("size", 0), reverse=True)[:limit]
-    if not entries:
-        if peak is not None:
-            header.append(
-                "(no allocation sites recorded — transient allocations are freed before "
-                "the session-end snapshot; see the peak figure above for total volume)"
-            )
-        else:
-            header.append(
-                "(no allocation sites recorded — transient allocations are freed before "
-                "the session-end snapshot, and no peak was recorded either)"
-            )
-        return "\n".join(header)
-
-    root_path = Path(root).resolve() if root is not None else None
-    table = [f"{'site':<{_SITE_WIDTH}} {'size':>{_SIZE_WIDTH}} {'blocks':>{_BLOCKS_WIDTH}}"]
-    for e in entries:
-        site = _display_site(e.get("file", "?"), e.get("line", 0), root_path)
-        size_str = f"{e.get('size', 0) / 1024:.1f}K"
-        table.append(
-            f"{site:<{_SITE_WIDTH}} {size_str:>{_SIZE_WIDTH}} {e.get('count', 0):>{_BLOCKS_WIDTH}}"
-        )
-    return "\n".join([*header, "", *table])
+    peaks_section = _format_test_peaks(doc.get("test_peaks", {}), limit)
+    sites_section = _format_retained_sites(doc.get("top", []), limit, root)
+    return f"{peaks_section}\n\n{sites_section}"
 
 
 def run_profile(

@@ -61,7 +61,7 @@ def test_profile_command_prints_both_sections(repo, capsys):
     assert cli_main.main(["profile", "-C", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "=== CPU ===" in out
-    assert "=== allocation sites ===" in out
+    assert "=== allocation ===" in out
     # Not just the section headers: the hot function and the user's own
     # file must actually be named, in both sections.
     assert "work" in out
@@ -87,27 +87,94 @@ def transient_repo(git_repo):
 
 
 @pytest.mark.slow
-def test_a_transient_benchmark_still_reports_a_peak_and_labels_what_it_measured(transient_repo):
-    """The documented limitation, pinned to the part that is actually stable.
+def test_a_transient_benchmark_reports_a_real_peak_and_labels_what_it_measured(transient_repo):
+    """The bug this whole change fixes.
 
-    The allocation pass reports blocks still live at the session-end
-    snapshot, not allocation churn. Whether any given site survives to that
-    snapshot depends on GC timing and the platform's allocator, not on the
-    workload: this same transient benchmark reports `pkg/mod.py` on macOS
-    and nothing on Linux. So the site list cannot be asserted in either
-    direction without writing a test that passes on one OS and fails on the
-    other — which is exactly the bug that made CI red.
-
-    What IS invariant is the framing: a peak figure is always measured, and
-    the output always says which of the two things it is reporting, so a
-    reader never mistakes retained memory for allocation volume. If this is
-    ever reworked to measure churn, this test is what should change.
+    Before per-benchmark peaks existed, a transient-allocating benchmark
+    reported NOTHING: the session-end snapshot only sees blocks still live
+    when it is taken, and this benchmark frees everything before then. A
+    fix that only changed wording, without actually measuring anything new,
+    would still pass a test that merely checks for labels — so this test
+    also pins a real magnitude for the transient benchmark's own node id,
+    which is exactly the number that used to not exist.
     """
     cfg = config.load(transient_repo / config.CONFIG_PATH)
     report = profile.run_profile(transient_repo, ["tests/test_mod.py::test_w"], cfg)
-    assert "peak traced memory" in report.mem_top
+
+    doc = json.loads(report.mem_path.read_text(encoding="utf-8"))
+    peaks = doc["test_peaks"]
+    assert set(peaks) == {"tests/test_mod.py::test_w"}
+    # 500 short strings is at least a few tens of KB once pytest-benchmark's
+    # own per-round bookkeeping is added in; a broken (or reverted) plugin
+    # reports 0 here, because nothing about this benchmark survives to the
+    # session-end snapshot the old code relied on exclusively.
+    assert peaks["tests/test_mod.py::test_w"] > 10_000
+
+    assert "peak additional traced memory during each benchmark" in report.mem_top
+    assert "tests/test_mod.py::test_w" in report.mem_top
+    assert "not filtered to this repository" in report.mem_top
     assert "still allocated when the session ended" in report.mem_top
     assert "retained memory, not total bytes allocated" in report.mem_top
+
+
+@pytest.fixture
+def mixed_alloc_repo(git_repo):
+    """One module with a transient-only function and a retaining one.
+
+    The two measurements this change adds/keeps answer different questions,
+    and this fixture is built so both have something real to say: the
+    session-end snapshot sees `retaining`'s survivor (an assertable site),
+    while only the per-benchmark peak sees `transient`'s churn (which the
+    snapshot alone would report as nothing at all).
+    """
+    (git_repo / "pkg").mkdir()
+    (git_repo / "pkg" / "__init__.py").write_text("")
+    (git_repo / "pkg" / "mod.py").write_text(
+        "_RETAINED = []\n\n\n"
+        "def transient():\n"
+        "    return len([str(i) for i in range(50_000)])\n\n\n"
+        "def retaining():\n"
+        "    _RETAINED[:] = [str(i) for i in range(500)]\n"
+        "    return len(_RETAINED)\n"
+    )
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_mod.py").write_text(
+        "from pkg.mod import retaining, transient\n\n\n"
+        "def test_transient(benchmark):\n"
+        "    benchmark(transient)\n\n\n"
+        "def test_retaining(benchmark):\n"
+        "    benchmark(retaining)\n"
+    )
+    cli_main.main(["init", "-C", str(git_repo)])
+    git(git_repo, "add", "-A")
+    git(git_repo, "commit", "-q", "-m", "init")
+    return git_repo
+
+
+@pytest.mark.slow
+def test_per_benchmark_peaks_are_keyed_by_node_id_for_every_benchmark(mixed_alloc_repo):
+    cfg = config.load(mixed_alloc_repo / config.CONFIG_PATH)
+    node_ids = ["tests/test_mod.py::test_transient", "tests/test_mod.py::test_retaining"]
+    report = profile.run_profile(mixed_alloc_repo, node_ids, cfg)
+
+    doc = json.loads(report.mem_path.read_text(encoding="utf-8"))
+    peaks = doc["test_peaks"]
+    assert set(peaks) == set(node_ids)
+    # The transient benchmark allocates ~50,000 short strings — a peak on
+    # the order of a megabyte, not zero. This is exactly the case the old
+    # session-end-only snapshot reported as empty.
+    assert peaks["tests/test_mod.py::test_transient"] > 500_000
+    # The retaining benchmark allocates far less (500 strings); its peak
+    # should be real but much smaller than the transient one's.
+    assert (
+        0 < peaks["tests/test_mod.py::test_retaining"] < peaks["tests/test_mod.py::test_transient"]
+    )
+
+    # The retaining benchmark's allocation also survives to the session-end
+    # snapshot and is named there, by source line.
+    assert "mod.py" in report.mem_top
+    for node_id in node_ids:
+        assert node_id in report.mem_top
 
 
 @pytest.mark.slow
@@ -181,16 +248,72 @@ def test_format_mem_labels_sites_as_retained_not_allocated(tmp_path):
     assert "not total bytes allocated" in text
 
 
-def test_format_mem_reports_the_peak_when_the_plugin_recorded_one(tmp_path):
+def test_format_mem_reports_the_peak_for_each_test_id(tmp_path):
     path = tmp_path / "mem.json"
     path.write_text(
         json.dumps(
-            {"top": [{"file": "a.py", "line": 1, "size": 1, "count": 1}], "peak_bytes": 2048}
+            {
+                "top": [{"file": "a.py", "line": 1, "size": 1, "count": 1}],
+                "test_peaks": {"tests/test_x.py::test_hot": 2048},
+            }
         )
     )
     text = profile.format_mem(path)
     assert "peak" in text.lower()
+    assert "tests/test_x.py::test_hot" in text
     assert "2.0K" in text
+
+
+def test_format_mem_keys_peaks_by_node_id_and_shows_every_benchmark(tmp_path):
+    path = tmp_path / "mem.json"
+    path.write_text(
+        json.dumps(
+            {
+                "top": [],
+                "test_peaks": {
+                    "tests/test_x.py::test_hot": 105_000,
+                    "tests/test_x.py::test_cold": 2_100,
+                },
+            }
+        )
+    )
+    text = profile.format_mem(path)
+    assert "tests/test_x.py::test_hot" in text
+    assert "tests/test_x.py::test_cold" in text
+    # The bigger peak is listed first — descending, like the retained-sites
+    # table below it, so the most actionable entry is always on top.
+    assert text.index("test_hot") < text.index("test_cold")
+
+
+def test_format_mem_says_plainly_when_no_benchmarks_ran(tmp_path):
+    path = tmp_path / "mem.json"
+    path.write_text(json.dumps({"top": [], "test_peaks": {}}))
+    text = profile.format_mem(path)
+    assert "no per-benchmark peaks recorded" in text
+    assert "no benchmarks ran" in text
+    # Not an empty table: no "benchmark ... peak" header row printed when
+    # there is nothing to put under it.
+    assert not any(line.strip().startswith("benchmark ") for line in text.splitlines())
+
+
+def test_format_mem_distinguishes_peak_from_retained_labels(tmp_path):
+    """A reader must not be able to mistake the per-benchmark peak (allocation
+    volume, process-wide) for the retained-sites table (still-live bytes,
+    filtered to the repository) — the whole point of reporting both."""
+    path = tmp_path / "mem.json"
+    path.write_text(
+        json.dumps(
+            {
+                "top": [{"file": "a.py", "line": 1, "size": 4096, "count": 1}],
+                "test_peaks": {"tests/test_x.py::test_hot": 2048},
+            }
+        )
+    )
+    text = profile.format_mem(path)
+    assert "peak additional traced memory during each benchmark" in text
+    assert "not filtered to this repository" in text
+    assert "blocks still allocated when the session ended" in text
+    assert "retained memory, not total bytes allocated" in text
 
 
 def test_format_mem_relativizes_to_the_repo_root(tmp_path):
