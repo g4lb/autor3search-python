@@ -393,23 +393,35 @@ def test_check_state_fs_is_ok_when_repo_and_state_share_a_filesystem(git_repo):
 
 
 def test_check_state_fs_warns_when_filesystems_differ(git_repo, monkeypatch):
-    """Point AUTOR3SEARCH_PYTHON_STATE_HOME at a tmpfs or a second volume and
-    the pinned baseline worktree ends up on different storage than the
-    repository being measured — invisible in the numbers, and fatal for an
-    I/O-bound benchmark. Real separate filesystems are not available in every
-    test environment, so os.stat's st_dev is faked directly: check_state_fs
-    calls root.stat() and then home_probe.stat(), in that order, with nothing
-    else in between that would also call .stat()."""
+    """Point AUTOR3SEARCH_PYTHON_STATE_HOME at a tmpfs or a second volume and the
+    pinned baseline worktree ends up on different storage than the repository
+    being measured — invisible in the numbers, and fatal for an I/O-bound
+    benchmark. Separate filesystems are not available in every test
+    environment, so the device id is faked at doctor's own seam. It is faked
+    per path rather than per call: an earlier version of this test patched
+    Path.stat globally with a finite iterator, which pytest's own traceback
+    machinery then exhausted, crashing the whole run with INTERNALERROR.
+    """
+    seen: list[Path] = []
 
-    class _FakeStat:
-        def __init__(self, dev):
-            self.st_dev = dev
+    def fake_device_id(path: Path) -> int:
+        seen.append(path)
+        return len(seen)  # 1 for the repo, 2 for the state home: always differ
 
-    calls = iter([_FakeStat(1), _FakeStat(2)])
-    monkeypatch.setattr(Path, "stat", lambda self, *a, **k: next(calls))
+    monkeypatch.setattr(doctor, "_device_id", fake_device_id)
     finding = doctor.check_state_fs(git_repo)
     assert finding.severity is doctor.Severity.WARN
     assert "different filesystems" in finding.detail
+    assert len(seen) == 2, "check_state_fs must consult exactly the two paths"
+
+
+def test_check_state_fs_is_ok_when_the_device_ids_match(git_repo, monkeypatch):
+    """The negative control. Without it the test above passes against a
+    check_state_fs that returns WARN unconditionally."""
+    monkeypatch.setattr(doctor, "_device_id", lambda path: 7)
+    finding = doctor.check_state_fs(git_repo)
+    assert finding.severity is doctor.Severity.OK
+    assert "share a filesystem" in finding.detail
 
 
 def test_check_state_fs_is_included_in_the_full_check(git_repo):

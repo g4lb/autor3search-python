@@ -186,6 +186,19 @@ def _nearest_existing_ancestor(path: Path) -> Path:
     return probe
 
 
+def _device_id(path: Path) -> int:
+    """The filesystem device id for `path`.
+
+    A seam, and it earns its place: the obvious way to test check_state_fs is
+    to patch `Path.stat`, but that patches it for the whole process — pytest's
+    own traceback formatter calls `Path.exists()`, which calls it too. A stub
+    that runs dry there raises StopIteration inside pytest's internals and
+    crashes the run with INTERNALERROR rather than failing a test. Replacing
+    this function instead touches only the two calls that matter.
+    """
+    return path.stat().st_dev
+
+
 def check_state_fs(directory: str | Path) -> Finding:
     """The pinned baseline worktree lives under `state_home()`, out of the
     repository on purpose (see state.py's module docstring) — deliberately
@@ -210,8 +223,8 @@ def check_state_fs(directory: str | Path) -> Finding:
         )
     home_probe = _nearest_existing_ancestor(home)
     try:
-        root_dev = root.stat().st_dev
-        home_dev = home_probe.stat().st_dev
+        root_dev = _device_id(root)
+        home_dev = _device_id(home_probe)
     except OSError as e:
         return Finding(
             "state filesystem",
