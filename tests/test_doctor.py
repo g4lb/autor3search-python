@@ -169,11 +169,12 @@ def test_doctor_uses_the_configured_interpreter(git_repo, capsys):
     assert bogus in capsys.readouterr().out
 
 
-def test_the_measuring_interpreter_must_import_the_harness_itself(monkeypatch):
+def test_missing_autor3search_python_is_a_warning_naming_profile_not_a_failure(monkeypatch):
     """`profile` runs `-p autor3search_python.profiling` under `python`, not
-    under the interpreter running the harness. Point `python` at a venv without
-    the harness installed and measurement works while profiling fails at
-    collection — checked here, so it is a sentence instead of a 3am mystery."""
+    under the interpreter running the harness — but `eval` and `bench` never
+    need it there. Point `python` at a venv without the harness installed and
+    measurement still works while only `profile` fails at collection; this
+    must not be reported as "nothing can be measured", which is false."""
 
     class _Missing:
         returncode = 1
@@ -182,9 +183,41 @@ def test_the_measuring_interpreter_must_import_the_harness_itself(monkeypatch):
 
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Missing())
     f = doctor.check_benchmark_tooling("fake-python")
-    assert f.severity is doctor.Severity.FAIL
+    assert f.severity is doctor.Severity.WARN
     assert "autor3search_python is not importable" in f.detail
+    assert "profile" in f.detail
     assert "pip install pytest pytest-benchmark autor3search-python" in f.detail
+
+
+def test_missing_pytest_or_pytest_benchmark_is_a_failure_not_a_warning(monkeypatch):
+    """The other half of the split: these two genuinely mean nothing can be
+    measured, so they must stay a FAIL even though autor3search_python alone
+    is now only a WARN."""
+
+    class _Missing:
+        returncode = 1
+        stdout = ""
+        stderr = "pytest pytest_benchmark\n"
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Missing())
+    f = doctor.check_benchmark_tooling("fake-python")
+    assert f.severity is doctor.Severity.FAIL
+    assert "nothing can be measured" in f.detail
+    assert "pip install pytest pytest-benchmark autor3search-python" in f.detail
+
+
+def test_missing_pytest_outranks_a_also_missing_autor3search_python(monkeypatch):
+    """When both a hard and a soft dependency are missing, report the FAIL —
+    the WARN alone would understate the situation."""
+
+    class _Missing:
+        returncode = 1
+        stdout = ""
+        stderr = "pytest autor3search_python\n"
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Missing())
+    f = doctor.check_benchmark_tooling("fake-python")
+    assert f.severity is doctor.Severity.FAIL
 
 
 def test_the_tooling_check_probes_every_required_module(monkeypatch):

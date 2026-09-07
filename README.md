@@ -367,10 +367,13 @@ def test_my_function_benchmark(benchmark):
 
 Any test function (`test_*` or `*_test`, including inside a `Test*` class)
 that takes the `benchmark` fixture, or carries `@pytest.mark.benchmark(...)`,
-is discovered automatically. `pytest-benchmark` must be installed in the
-environment that will run the benchmarks, alongside `autor3search-python`
-itself, which `profile` loads as a plugin inside that same interpreter —
-`doctor` checks for all three.
+is discovered automatically. `pytest` and `pytest-benchmark` must be
+installed in the environment that will run the benchmarks — `doctor` reports
+FAIL if either is missing, since nothing can be measured without them.
+`autor3search-python` itself is only needed there because `profile` loads it
+as a plugin inside that same interpreter; `eval` does not need it, so
+`doctor` reports a WARN naming `profile`, not a FAIL, when only that one is
+missing.
 
 One warning worth taking seriously: benchmarking a cold, rarely-exercised
 path produces numbers that are entirely real and entirely useless — a 90%
