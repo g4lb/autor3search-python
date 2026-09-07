@@ -39,39 +39,72 @@ timings out of [pytest-benchmark](https://pytest-benchmark.readthedocs.io/).
 
 ## Start here
 
-> **POSIX only (Linux, macOS). Windows is not supported and not tested.**
-> `autor3search-python` has never been run on Windows, and `eval` refuses to
-> start there unless you explicitly override it. Three guarantees depend on
-> POSIX process groups and are simply absent there:
->
-> - the concurrency guard that stops two evals from running against the same
->   pinned baseline at once;
-> - `stop --force`'s ability to signal a running eval at all;
-> - killing a timed-out benchmark's whole process tree, rather than leaking
->   grandchildren that keep burning CPU.
->
-> `doctor` reports all three by name if you run it anyway. See
-> [Limitations](#limitations) for the override.
+Open your coding agent inside the Python repository you want to make faster,
+and paste this:
 
-If you are a coding agent that has just been pointed at this README, this is
-everything you need:
+```text
+Install and run autor3search-python on this repository, then optimize it.
 
-```bash
-# 1. Install the harness.
-uv tool install autor3search-python   # or: pipx install autor3search-python
+Setup:
+1. uv tool install autor3search-python   (or: pipx install autor3search-python)
+2. autor3search-python init
+   Show me the benchmarks it discovered. If it reports none, STOP and tell me:
+   this tool can only optimize what it can measure.
+3. git add -A && git commit -m "autor3search-python init"
+4. autor3search-python doctor
+   Show me any warnings. If the machine looks unfit to measure, stop and ask me
+   before continuing.
+5. autor3search-python baseline -tag <today, e.g. sep7>
+   This copies the repository into a pinned worktree and freezes what the
+   verdict depends on, so it takes a moment.
 
-# 2. From the repository you want to optimize:
-autor3search-python init              # discovers benchmarks, writes config + program.md
-git add -A && git commit -m "autor3search-python init"
-autor3search-python doctor            # is this machine fit to measure? (informational)
-autor3search-python baseline -tag <a-short-tag>
+Then:
+6. Read program.md in this repository, in full. It is your instruction set for
+   the rest of this run. Follow it exactly.
 
-# 3. Read program.md. It is the complete instruction set — the loop, the exit
-#    codes, the JSON contract, what you may and may not edit. Follow it exactly.
+Rules for the whole run:
+- One hypothesis per commit. Commit before each experiment, then run
+  `autor3search-python eval --json` and apply its verdict before touching
+  anything else: KEEP means the commit stays; anything else (DISCARD, FAIL,
+  CRASH) means `git reset --hard HEAD~1`.
+- Never edit program.md, .autor3search/config.toml, results.tsv, any test or
+  benchmark file, conftest.py, pyproject.toml, or a lockfile. They are not
+  yours.
+- Never pass -force to any autor3search-python command. (I may run
+  `autor3search-python stop -force` myself; that one is mine, not yours.)
+- Print one context line before each experiment, so I can see where you are:
+  [exp <n> | <branch> | vs <measure_commit> | stop: autor3search-python stop]
+
+Run the loop until I stop you. I stop you by running
+`autor3search-python stop` in my own terminal — you will see it as
+"stop_requested": true in a verdict. When you do: apply that verdict, do not
+start another experiment, run `autor3search-python report`, summarize what you
+tried, and exit the loop.
 ```
 
+That's the whole handoff. The agent installs the tool, discovers your
+benchmarks, freezes a baseline, and then follows `program.md` — generated for
+your repository by `init` — which tells it how to run the keep-or-discard loop.
+`program.md` names the benchmarks in scope, spells out the KEEP/DISCARD/FAIL/
+CRASH contract, lists everything the agent must never touch, and ends with a
+bank of generic Python performance ideas for when the agent is out of
+hypotheses.
+
+What you get back: one commit per accepted change on a branch named
+`autor3search-python/<tag>`, and a `results.tsv` recording every experiment
+that was tried, including the ones that failed. `autor3search-python report`
+summarizes it.
+
+Two things worth knowing before you start it:
+
+- **It needs benchmarks.** This optimizes what it can measure, and refuses to
+  guess: `init` looks for pytest-benchmark benchmarks and tells you plainly
+  when it finds none.
+- **Numbers are only as good as the machine.** Run `doctor` and read it. A
+  thermally throttled laptop on battery produces noise dressed as data.
+
 Everything past this point is for the human setting the run up, or for
-understanding what the agent in step 3 is actually bound by.
+understanding what the agent in step 6 is actually bound by.
 
 ## The idea
 
@@ -344,17 +377,22 @@ them should not be over-read:
 
 ## Limitations
 
-**POSIX only (Linux, macOS); Windows is not supported and not tested.** See
-the note under [Start here](#start-here) for what specifically breaks —
-`doctor` names the same three gaps as a FAIL when run on a non-POSIX
-platform. `eval` refuses to start there at all, because the whole point of
-this tool is a number you can stand behind and it cannot produce a
-trustworthy one on a platform none of its safety mechanisms have ever run
-on. Set `AUTOR3SEARCH_PYTHON_ALLOW_UNSUPPORTED_PLATFORM=1` to run it anyway,
-having read the three gaps above. `stop --force` also refuses to signal a
-running eval on such a platform (it would otherwise crash trying), and
-prints instead: the graceful stop request is still written, and you should
-interrupt the agent yourself.
+**Windows works, with one difference worth knowing.** CI runs the full suite on
+`windows-latest` alongside Linux and macOS. The run claim is a real lock there
+(`msvcrt`, not the unconditional success it used to report), and a job object
+gives `eval` the killable process tree a process group gives it elsewhere — so
+a benchmark that hits its timeout takes its pytest subprocess and every
+grandchild with it, and `stop -force` reaches the benchmark rather than
+orphaning it. The difference: `stop -force` there is **immediate rather than a
+request**. Windows offers no signal a benchmark can act on mid-round, so the
+eval is ended rather than asked, and it does not get to record what it
+abandoned. Plain `stop` is unaffected and behaves identically everywhere.
+`doctor` also has no load average or CPU governor to read there, so it warns
+you about less. One residual race is real: a grandchild started in the
+microseconds between spawning a benchmark subprocess and putting it in its job
+object is outside that job and would survive a timeout kill. Windows offers no
+way to create a process directly into a job through `subprocess`, and the Go
+original has the same window.
 
 Ported from the Go original:
 
