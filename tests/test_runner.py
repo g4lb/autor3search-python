@@ -184,3 +184,32 @@ def test_importable_modules_skips_test_files(tmp_path):
     (tmp_path / "conftest.py").write_text("")
     (tmp_path / "real.py").write_text("")
     assert runner.importable_modules(tmp_path, Matcher(["./..."])) == ["real"]
+
+
+def test_compile_gate_skips_the_directories_discovery_skips(tmp_path):
+    """The exclude is derived from discover.SKIP_DIRS, so build/ and dist/ are
+    out. They hold vendored or stale copies the agent never touched; compiling
+    them turned a syntax error nobody was measuring into a CRASH verdict."""
+    (tmp_path / "good.py").write_text("def f():\n    return 1\n")
+    for name in ("build", "dist", "node_modules", "__pycache__"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "broken.py").write_text("def f(\n")
+    res = r(tmp_path).compile_gate(["."])
+    assert res.ok() is True
+    assert "broken.py" not in res.stdout + res.stderr
+
+
+def test_pytest_gate_resolves_modules_the_same_way_bench_does(tmp_path, monkeypatch):
+    """A gate and a measurement that import differently are two programs, and
+    only one of them gets a verdict."""
+    seen = []
+    rr = r(tmp_path)
+    monkeypatch.setattr(
+        rr, "python_run", lambda *a: seen.append(a) or runner.Result((), "", "", 0, False, 0.0)
+    )
+    rr.pytest_gate()
+    rr.bench(["tests/test_x.py::test_y"], tmp_path / "out.json", config.default())
+    gate_args, bench_args = seen
+    assert "--import-mode=importlib" in gate_args
+    assert "--import-mode=importlib" in bench_args

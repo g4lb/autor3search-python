@@ -16,10 +16,14 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from autor3search_python import gitx
+from autor3search_python import discover, gitx
 
-_COVERAGE_CONFIGS = ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")
 _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
+
+# Every module the interpreter named by `python` must be able to import.
+# autor3search_python belongs here because `profile` loads its plugin with
+# `-p autor3search_python.profiling` inside that interpreter, not this one.
+_REQUIRED_MODULES = ("pytest", "pytest_benchmark", "autor3search_python")
 
 
 class Severity(IntEnum):
@@ -138,20 +142,40 @@ def check_disk(directory: str | Path) -> Finding:
 
 
 def check_benchmark_tooling(python: str = "") -> Finding:
-    """pytest and pytest-benchmark must be importable by the measuring interpreter."""
+    """Everything the measuring interpreter must be able to import.
+
+    `autor3search_python` is on the list beside pytest and pytest-benchmark
+    because `profile` runs `-p autor3search_python.profiling` under exactly
+    this interpreter, not under the one running the harness. Configure `python`
+    to a venv without the harness installed and measurement works while
+    profiling fails at collection — a confusing failure at 3am, and one this
+    check exists to turn into a sentence.
+    """
     exe = python or sys.executable
     script = (
-        "import pytest, pytest_benchmark\nprint(pytest.__version__, pytest_benchmark.__version__)\n"
+        "import sys\n"
+        f"for _name in {list(_REQUIRED_MODULES)!r}:\n"
+        "    try:\n"
+        "        __import__(_name)\n"
+        "    except ImportError:\n"
+        "        print(_name, file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "import pytest, pytest_benchmark\n"
+        "print(pytest.__version__, pytest_benchmark.__version__)\n"
     )
     try:
         proc = subprocess.run([exe, "-c", script], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as e:
         return Finding("pytest-benchmark", f"could not run {exe}: {e}", Severity.FAIL)
     if proc.returncode != 0:
+        missing = proc.stderr.strip().splitlines()
+        name = missing[-1] if missing and missing[-1] in _REQUIRED_MODULES else ""
+        what = f"{name} is" if name else "pytest, pytest-benchmark or autor3search-python is"
         return Finding(
             "pytest-benchmark",
-            f"not importable by {exe} — nothing can be measured without it. "
-            f"Fix with: {exe} -m pip install pytest pytest-benchmark",
+            f"{what} not importable by {exe} — nothing can be measured without it. "
+            f"Fix with: {exe} -m pip install "
+            f"{' '.join(m.replace('_', '-') for m in _REQUIRED_MODULES)}",
             Severity.FAIL,
         )
     versions = proc.stdout.strip().split()
@@ -175,7 +199,7 @@ def check_coverage_addopts(root: str | Path) -> Finding:
     attached to numbers that measure the instrumentation, not the code.
     """
     root = Path(root)
-    for name in _COVERAGE_CONFIGS:
+    for name in discover.PYTEST_CONFIG_FILES:
         path = root / name
         try:
             text = path.read_text(encoding="utf-8", errors="replace")

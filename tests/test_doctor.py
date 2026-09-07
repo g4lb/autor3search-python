@@ -167,3 +167,36 @@ def test_doctor_uses_the_configured_interpreter(git_repo, capsys):
 
     cli_main.main(["doctor", "-C", str(git_repo)])
     assert bogus in capsys.readouterr().out
+
+
+def test_the_measuring_interpreter_must_import_the_harness_itself(monkeypatch):
+    """`profile` runs `-p autor3search_python.profiling` under `python`, not
+    under the interpreter running the harness. Point `python` at a venv without
+    the harness installed and measurement works while profiling fails at
+    collection — checked here, so it is a sentence instead of a 3am mystery."""
+
+    class _Missing:
+        returncode = 1
+        stdout = ""
+        stderr = "autor3search_python\n"
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Missing())
+    f = doctor.check_benchmark_tooling("fake-python")
+    assert f.severity is doctor.Severity.FAIL
+    assert "autor3search_python is not importable" in f.detail
+    assert "pip install pytest pytest-benchmark autor3search-python" in f.detail
+
+
+def test_the_tooling_check_probes_every_required_module(monkeypatch):
+    seen = []
+
+    class _Ok:
+        returncode = 0
+        stdout = "8.0.0 4.0.0\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda args, **k: seen.append(args) or _Ok())
+    assert doctor.check_benchmark_tooling("fake-python").severity is doctor.Severity.OK
+    script = seen[0][-1]
+    for name in ("pytest", "pytest_benchmark", "autor3search_python"):
+        assert name in script

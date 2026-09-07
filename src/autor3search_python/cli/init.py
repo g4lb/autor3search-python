@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from autor3search_python import config, discover, gitx, templates
+from autor3search_python import config, discover, gitx, pipeline, results, templates
 from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
 
 # ".autor3search/*" ignores everything the harness writes under that directory
@@ -16,11 +16,22 @@ from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
 # file there meant to be version-controlled since humans own it. Note the "/*":
 # git cannot re-include a file whose parent DIRECTORY is excluded, so
 # ".autor3search/" plus a negation would silently fail.
+#
+# The two output paths are IMPORTED, never spelled again: results.tsv is parsed
+# strictly by `report` and run.log is the transcript `eval` holds open, so a
+# rename that left a literal here would quietly start committing the file it
+# was meant to ignore.
+#
+# The bytecode entries are not tidiness. compile_gate runs compileall and
+# pytest writes bytecode too, so without them program.md's `git add -A` commits
+# a `__pycache__` tree that changes on every experiment.
 GITIGNORE_ENTRIES = (
     ".autor3search/*",
     "!.autor3search/config.toml",
-    "results.tsv",
-    "run.log",
+    results.PATH,
+    pipeline.RUN_LOG_NAME,
+    "__pycache__/",
+    "*.py[cod]",
 )
 
 

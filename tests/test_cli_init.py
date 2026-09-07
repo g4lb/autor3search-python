@@ -2,9 +2,10 @@ import datetime
 
 import pytest
 
-from autor3search_python import config
+from autor3search_python import config, pipeline, results
 from autor3search_python.cli import init as cli_init
 from autor3search_python.cli import main as cli_main
+from tests.conftest import git
 
 
 @pytest.fixture
@@ -122,3 +123,24 @@ def test_default_tag_matches_the_date_exactly(monkeypatch, year, month, day, wan
 
     monkeypatch.setattr(cli_init.dt, "datetime", FrozenDatetime)
     assert cli_init.default_tag() == want
+
+
+def test_gitignore_names_the_harness_output_paths_by_import(repo_with_benchmark):
+    """Renaming results.tsv or run.log must not silently start committing them."""
+    assert results.PATH in cli_init.GITIGNORE_ENTRIES
+    assert pipeline.RUN_LOG_NAME in cli_init.GITIGNORE_ENTRIES
+
+
+def test_gitignore_keeps_the_harness_own_bytecode_out_of_the_agents_commits(
+    repo_with_benchmark,
+):
+    """compile_gate runs compileall and pytest writes bytecode too, so without
+    these entries program.md's `git add -A` commits a __pycache__ tree that
+    changes on every experiment."""
+    assert cli_main.main(["init", "-C", str(repo_with_benchmark)]) == 0
+    cache = repo_with_benchmark / "tests" / "__pycache__"
+    cache.mkdir()
+    (cache / "test_speed.cpython-313.pyc").write_bytes(b"\x00")
+    (repo_with_benchmark / "stray.pyc").write_bytes(b"\x00")
+    untracked = git(repo_with_benchmark, "ls-files", "--others", "--exclude-standard")
+    assert ".pyc" not in untracked
