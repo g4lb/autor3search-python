@@ -7,6 +7,11 @@ does the loop exit. Nothing is thrown away. `-force` writes the same request and
 additionally signals the running eval to abandon the experiment — that
 experiment is lost, because nothing was measured, and no results.tsv row is
 written for it. Ctrl+C on the agent is equivalent to -force.
+
+Off POSIX, -force is immediate rather than a request: there is no signal an
+eval can act on mid-benchmark, so the process is ended instead of asked, and it
+does not get to report what it abandoned. Plain `stop` behaves identically
+everywhere.
 """
 
 from __future__ import annotations
@@ -20,8 +25,9 @@ from autor3search_python import gitx, runstop
 from autor3search_python.cli import runctx
 from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
 
-# Computed once, same as runstop._POSIX: `_signal_group` below calls
-# os.killpg, which does not exist off this platform.
+# Computed once, same as runstop._POSIX: it selects between the two ways
+# -force can reach a running eval — `_signal_group` calls os.killpg, which
+# does not exist off this platform, and `_terminate` ends the process instead.
 _POSIX = os.name == "posix"
 
 
@@ -40,6 +46,21 @@ def group_signal_target(pid: int) -> int:
 
 def _signal_group(pid: int) -> None:
     os.killpg(group_signal_target(pid), signal.SIGINT)
+
+
+def _terminate(pid: int) -> None:
+    """End the eval outright, for a platform with no signal it can act on.
+
+    os.kill is TerminateProcess on Windows: there is no SIGINT a benchmark
+    loop could notice mid-round, so the process is stopped rather than asked.
+    It takes the pid itself, never the negated one a process group needs.
+    Everything the eval was measuring dies with it — the job objects holding
+    each benchmark's process tree are kill-on-close, and the last handle to
+    them goes when the eval does.
+    """
+    if pid <= 1:
+        raise ValueError(f"pid {pid} is not a process this command will signal")
+    os.kill(pid, signal.SIGTERM)
 
 
 def run(args: list[str]) -> int:
@@ -98,28 +119,23 @@ def run(args: list[str]) -> int:
         runstop.clear_eval_pid(ctx.state_dir)
     else:
         if running:
-            if not _POSIX:
-                # `_signal_group` calls os.killpg, which does not exist on this
-                # platform (AttributeError, not a clean refusal) — so this must
-                # be caught before it is ever called, not after it raises.
-                print(
-                    f"autor3search-python stop: cannot signal the running eval (pid {pid}) "
-                    "on this platform — stop --force relies on POSIX process groups, which "
-                    "do not exist here.",
-                    file=sys.stderr,
-                )
-                print(
-                    "The graceful stop request has still been written and will be read at "
-                    "the next verdict. To abandon the current experiment now, interrupt the "
-                    "running agent yourself (e.g. Ctrl+C in its terminal).",
-                    file=sys.stderr,
-                )
-                return EXIT_USAGE
             try:
-                _signal_group(pid)
-                print(f"signalled the running eval (pid {pid}) to abandon its experiment.")
+                if _POSIX:
+                    _signal_group(pid)
+                    print(f"signalled the running eval (pid {pid}) to abandon its experiment.")
+                else:
+                    # `_signal_group` would call os.killpg, which does not exist
+                    # here at all (an AttributeError traceback, not a refusal),
+                    # so the branch is taken before it is ever reached.
+                    _terminate(pid)
+                    print(f"terminated the running eval (pid {pid}) and everything it started.")
+                    print(
+                        "On this platform -force is immediate rather than a request: there is "
+                        "no signal a benchmark can act on mid-round, so the eval was ended "
+                        "rather than asked, and did not get to report what it abandoned."
+                    )
             except (ValueError, OSError) as e:
-                print(f"autor3search-python stop: could not signal pid {pid}: {e}", file=sys.stderr)
+                print(f"autor3search-python stop: could not stop pid {pid}: {e}", file=sys.stderr)
                 return EXIT_USAGE
         else:
             print("no eval is running; the stop request is written and will be read next time.")

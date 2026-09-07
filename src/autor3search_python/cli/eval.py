@@ -35,19 +35,6 @@ from autor3search_python import (
 from autor3search_python.cli import runctx
 from autor3search_python.cli.main import EXIT_USAGE
 
-# eval's whole product is a number the human can stand behind. On a
-# non-POSIX platform it cannot deliver one: claim_eval's concurrency guard
-# always reports success (two evals can run against the same pinned
-# baseline at once), `stop --force` cannot signal a running eval to abandon
-# its experiment, and a timed-out benchmark leaks grandchild processes that
-# keep burning CPU and corrupting every later measurement. A silent wrong
-# number is worse than no number, so eval refuses outright rather than
-# producing one doctor already warned about. Set this to run anyway.
-ALLOW_UNSUPPORTED_PLATFORM_ENV = "AUTOR3SEARCH_PYTHON_ALLOW_UNSUPPORTED_PLATFORM"
-
-# Computed once, same as runstop._POSIX and runner._POSIX.
-_POSIX = os.name == "posix"
-
 
 def best_bench_delta(deltas: Sequence[benchio.Delta]) -> float:
     """The largest single-benchmark improvement, percent. 0.0 for no deltas."""
@@ -137,20 +124,6 @@ def run(args: list[str]) -> int:
         help="what this experiment tried; lands in results.tsv",
     )
     opts = parser.parse_args(args)
-
-    if not _POSIX and not os.environ.get(ALLOW_UNSUPPORTED_PLATFORM_ENV):
-        print(
-            "autor3search-python eval: refusing to run on a non-POSIX platform. This "
-            "harness has never been run or tested here, and cannot deliver a trustworthy "
-            "verdict: the concurrency guard cannot detect a second eval already running "
-            "against the same pinned baseline, `stop --force` cannot signal this eval to "
-            "abandon its experiment, and a timed-out benchmark would leak grandchild "
-            "processes that keep burning CPU and corrupt every later measurement. Run "
-            "`autor3search-python doctor` for details. Set "
-            f"{ALLOW_UNSUPPORTED_PLATFORM_ENV}=1 to run anyway.",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
 
     try:
         ctx = runctx.resolve(opts.directory, opts.tag)

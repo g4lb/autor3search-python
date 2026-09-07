@@ -5,7 +5,6 @@ import pytest
 from autor3search_python import benchio, pipeline, results, runstop, state, verdict
 from autor3search_python.cli import eval as cli_eval
 from autor3search_python.cli import main as cli_main
-from autor3search_python.cli.main import EXIT_USAGE
 from tests.conftest import git
 
 
@@ -305,38 +304,15 @@ def test_human_output_does_not_render_sub_microsecond_benchmarks_as_all_zero(
     assert "0.000ms" not in out
 
 
-def _boom(_opts):
-    raise AssertionError("pipeline.evaluate must not run when eval refuses to start")
-
-
-def test_eval_refuses_outright_on_non_posix(run_ready, monkeypatch, capsys):
-    """This machine cannot actually run Windows, so this fakes only os.name
-    and checks our own refusal fires — not real Windows behaviour. A silent
-    wrong number is worse than no number: pipeline.evaluate raises if it is
-    ever reached, so a regression that lets eval proceed anyway fails loudly
-    instead of quietly producing a verdict this platform cannot back up."""
-    monkeypatch.setattr(cli_eval, "_POSIX", False)
-    monkeypatch.delenv(cli_eval.ALLOW_UNSUPPORTED_PLATFORM_ENV, raising=False)
-    monkeypatch.setattr(pipeline, "evaluate", _boom)
-    code = cli_main.main(["eval", "-C", str(run_ready), "-desc", "x"])
-    err = capsys.readouterr().err
-    assert code == EXIT_USAGE
-    assert "refusing to run on a non-POSIX platform" in err
-    assert "concurrency guard cannot detect a second eval" in err
-    assert "stop --force` cannot signal this eval" in err
-    assert "grandchild processes" in err
-    assert f"Set {cli_eval.ALLOW_UNSUPPORTED_PLATFORM_ENV}=1 to run anyway." in err
-    assert results.load(run_ready / results.PATH) == []
-    assert runstop.eval_running(state.state_dir(run_ready, "t1")) == (0, False)
-
-
-def test_eval_override_env_var_lets_it_run_anyway(run_ready, monkeypatch):
-    """The override exists for someone who wants to experiment anyway, with
-    eyes open — it must actually let eval proceed, not just suppress the
-    message."""
-    monkeypatch.setattr(cli_eval, "_POSIX", False)
-    monkeypatch.setenv(cli_eval.ALLOW_UNSUPPORTED_PLATFORM_ENV, "1")
+def test_eval_has_no_platform_refusal_left(run_ready, monkeypatch):
+    """eval used to refuse to run off POSIX, because three of its guarantees
+    were missing there. They are implemented now (runstop's claim lock,
+    runner's job objects, stop --force), so nothing platform-specific gates it
+    any more: no flag to consult, and no override environment variable — one
+    that still existed would read as a switch that changes what eval trusts.
+    """
+    assert not hasattr(cli_eval, "_POSIX")
+    assert not hasattr(cli_eval, "ALLOW_UNSUPPORTED_PLATFORM_ENV")
     monkeypatch.setattr(pipeline, "evaluate", stub(keep(), [delta()]))
     assert cli_main.main(["eval", "-C", str(run_ready), "-desc", "x"]) == 0
-    rows = results.load(run_ready / results.PATH)
-    assert [r.status for r in rows] == ["KEEP"]
+    assert [r.status for r in results.load(run_ready / results.PATH)] == ["KEEP"]

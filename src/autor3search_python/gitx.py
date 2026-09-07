@@ -19,6 +19,12 @@ def _git(d: str | Path, *args: str) -> str:
     otherwise successful command — lfs filter warnings, advice hints, a user's
     own hooks — never gets parsed as part of the result. stderr appears in the
     error message only when the command fails.
+
+    The encoding is named rather than left to the locale, which is what
+    `text=True` alone would use: git speaks UTF-8 on every platform, but a
+    default Windows install decodes with cp1252, and a repository holding a
+    `café.py` then reported a `caf?.py` that matches nothing on disk to every
+    gate that reads a diff.
     """
     try:
         proc = subprocess.run(
@@ -26,6 +32,7 @@ def _git(d: str | Path, *args: str) -> str:
             cwd=str(d),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=_TIMEOUT,
         )
     except OSError as e:
@@ -38,7 +45,13 @@ def _git(d: str | Path, *args: str) -> str:
 
 
 def root(d: str | Path) -> str:
-    return _git(d, "rev-parse", "--show-toplevel")
+    """The repository root, in this platform's own path form.
+
+    git answers with POSIX separators everywhere, Windows included. Callers
+    that wrap this in Path() do not care, but `doctor` prints it and the run's
+    state directory is keyed on the repository path — one form, not two.
+    """
+    return str(Path(_git(d, "rev-parse", "--show-toplevel")))
 
 
 def head_commit(d: str | Path) -> str:

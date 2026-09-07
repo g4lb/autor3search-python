@@ -36,9 +36,9 @@ _REQUIRED_MODULES = _MEASURE_MODULES + _PROFILE_MODULES
 
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
-# Computed once, same as runstop._POSIX and runner._POSIX: this is the one
-# thing that determines whether the concurrency guard, `stop --force`, and
-# the timeout's process-group kill actually work.
+# Computed once, same as runstop._POSIX and runner._POSIX: it selects which
+# mechanism carries the concurrency guard, `stop --force`, and the timeout's
+# tree kill, and it is the one thing that changes what `stop --force` means.
 _POSIX = os.name == "posix"
 
 
@@ -119,15 +119,15 @@ def check_platform() -> Finding:
     if not _POSIX:
         return Finding(
             "platform",
-            "this platform is not POSIX; this harness has never been run or tested here, "
-            "and three of its guarantees are silently absent rather than merely degraded. "
-            "(1) The concurrency guard in claim_eval always reports success, so two evals "
-            "can run against the same pinned baseline worktree at once. (2) `stop --force` "
-            "cannot signal the running eval's process group here, so it cannot stop one. "
-            "(3) A benchmark that times out has only its direct child killed, not its "
-            "process group, so its grandchildren keep running and burn CPU, corrupting "
-            "every later measurement. Do not trust a number produced here.",
-            Severity.FAIL,
+            "this platform is not POSIX. The run claim is a real lock and a job object "
+            "gives a timed-out benchmark the killable process tree a process group gives "
+            "it elsewhere, so the guarantees hold; two differences are worth knowing. "
+            "`stop --force` is immediate here rather than a request — there is no signal "
+            "an eval can act on mid-benchmark, so it is ended rather than asked and does "
+            "not report what it abandoned (plain `stop` is unaffected). And this check "
+            "knows less about the machine here: no load average, no CPU governor, so it "
+            "warns you about less than it would on Linux.",
+            Severity.WARN,
         )
     if sys.platform == "darwin":
         return Finding(
