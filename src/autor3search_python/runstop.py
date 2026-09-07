@@ -55,23 +55,47 @@ def stop_requested(state_dir: str | Path) -> bool:
 
 
 def _try_lock(fd: int) -> bool:
-    if not _POSIX:  # pragma: no cover - Windows degrades to existence only
-        return True
-    import fcntl
+    """Take the claim, or report that someone else holds it.
 
+    Both platforms lock the file itself rather than trusting its existence: a
+    pid file left behind by an eval that was killed must read as free, and a
+    pid file whose holder is alive must read as taken, and only the kernel
+    knows which is which. Windows locks a one-byte range from the current file
+    position, so every call here seeks to 0 first — a lock taken at whatever
+    offset the last write left behind would be a different lock each time, and
+    two evals would both believe they had it.
+    """
+    if _POSIX:
+        import fcntl
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    import msvcrt
+
+    os.lseek(fd, 0, os.SEEK_SET)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
     except OSError:
         return False
     return True
 
 
 def _unlock(fd: int) -> None:
-    if not _POSIX:  # pragma: no cover
-        return
-    import fcntl
+    if _POSIX:
+        import fcntl
 
-    fcntl.flock(fd, fcntl.LOCK_UN)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return
+
+    import msvcrt
+
+    os.lseek(fd, 0, os.SEEK_SET)
+    with contextlib.suppress(OSError):
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
 def _read_pid(path: Path) -> tuple[int, bool]:
@@ -113,20 +137,37 @@ def claim_eval(state_dir: str | Path, pid: int) -> Iterator[None]:
             )
         locked = True
         os.ftruncate(fd, 0)
-        os.pwrite(fd, f"{pid}\n".encode(), 0)
+        # lseek + write rather than pwrite: os.pwrite does not exist on
+        # Windows. The seek is not incidental — _try_lock and _unlock both
+        # lock the byte at offset 0, so the position must be left where they
+        # expect it either way.
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, f"{pid}\n".encode())
         yield
     finally:
         # Only the process that actually took the lock may remove the file.
         # A refused claim never reaches here with locked=True, so it can never
         # unlink the live holder's pid file, blind eval_running, and let a
         # later claim take a fresh inode while the holder is still running.
-        if locked:
+        if locked and _POSIX:
             # Remove before closing: closing drops the lock, and a concurrent
             # eval_running that acquired it in between would otherwise read a
             # pid file this process is about to delete.
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
-        os.close(fd)
+            os.close(fd)
+        elif locked:
+            # Windows will not unlink a file that is still open, so the order
+            # above would leave the pid file behind after every eval. Release
+            # the lock, close, then delete. The gap that opens between the
+            # close and the unlink is harmless: nothing holds the claim during
+            # it, so a claim taken in that window is a correct one.
+            _unlock(fd)
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+        else:
+            os.close(fd)
 
 
 def eval_running(state_dir: str | Path) -> tuple[int, bool]:

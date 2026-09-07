@@ -58,7 +58,7 @@ def test_timeout_kills_grandchildren(tmp_path):
 
 @pytest.mark.slow
 def test_recovery_communicate_is_bounded_when_a_grandchild_escapes_the_group(tmp_path):
-    """A grandchild that calls os.setsid() escapes _kill_group's killpg
+    """A grandchild that calls os.setsid() escapes _kill_tree's killpg
     entirely and, inheriting the pipe fd, can keep it open indefinitely. An
     unbounded recovery communicate() would then block forever; Runner.run
     must still return, with timed_out=True, within a bounded wall time."""
@@ -402,3 +402,46 @@ def test_bench_env_strips_ambient_pytest_flags(tmp_path):
     assert "PYTEST_ADDOPTS" not in env
     assert "PYTEST_PLUGINS" not in env
     assert env["HOME"] == "/home/x"  # only the pytest knobs go
+
+
+class _FakeProc:
+    """Just enough subprocess.Popen for _kill_tree's non-POSIX branch."""
+
+    pid = 4242
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def kill(self) -> None:
+        self.events.append("kill")
+
+    def wait(self, timeout=None) -> int:
+        return 0
+
+
+class _FakeJob:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def terminate(self) -> None:
+        self.events.append("terminate job")
+
+
+def test_a_timeout_terminates_the_job_where_there_is_no_process_group(monkeypatch):
+    """Off POSIX there is no group to kill, and killing the direct child alone
+    leaves its grandchildren burning CPU. The job object holding the whole
+    tree is what replaces the group there."""
+    monkeypatch.setattr(runner, "_POSIX", False)
+    events: list[str] = []
+    runner._kill_tree(_FakeProc(events), _FakeJob(events))
+    assert events == ["terminate job"]
+
+
+def test_a_timeout_still_kills_the_child_when_no_job_could_be_created(monkeypatch):
+    """A job object is an API call that can fail. Degrading to the old
+    direct-child kill is worse but not nothing; crashing would abandon the
+    child entirely."""
+    monkeypatch.setattr(runner, "_POSIX", False)
+    events: list[str] = []
+    runner._kill_tree(_FakeProc(events), None)
+    assert events == ["kill"]

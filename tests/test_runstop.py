@@ -1,6 +1,8 @@
+import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -125,3 +127,84 @@ def test_clear_eval_pid_removes_a_leftover(tmp_path):
     runstop.clear_eval_pid(d)
     assert not (d / runstop.EVAL_PID_FILE).exists()
     runstop.clear_eval_pid(d)  # again, not an error
+
+
+class _FakeMsvcrt:
+    """Stands in for the module this test runner does not have.
+
+    The real cross-process refusal above is what proves the Windows lock on
+    Windows (CI runs it there); these fakes prove the far cheaper thing a
+    POSIX machine can still check — that the non-POSIX branch reaches for a
+    real lock at all, rather than the unconditional success it used to
+    report, which let two evals share one pinned worktree.
+    """
+
+    LK_NBLCK = 3
+    LK_UNLCK = 0
+
+    def __init__(self, *, refuse: bool = False) -> None:
+        self.calls: list[tuple[int, int]] = []
+        self.refuse = refuse
+
+    def locking(self, fd: int, mode: int, nbytes: int) -> None:
+        self.calls.append((mode, nbytes))
+        if self.refuse and mode == self.LK_NBLCK:
+            raise OSError(13, "another process has locked a portion of the file")
+
+
+@pytest.fixture
+def fake_windows(monkeypatch):
+    def install(*, refuse: bool = False) -> _FakeMsvcrt:
+        fake = _FakeMsvcrt(refuse=refuse)
+        monkeypatch.setattr(runstop, "_POSIX", False)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        return fake
+
+    return install
+
+
+def test_windows_claim_takes_a_real_lock(tmp_path, fake_windows):
+    fake = fake_windows()
+    with runstop.claim_eval(tmp_path / "state", 4242):
+        assert (fake.LK_NBLCK, 1) in fake.calls
+
+
+def test_windows_claim_is_refused_when_the_lock_is_held(tmp_path, fake_windows):
+    """The whole guarantee: a locked pid file means an eval is already running
+    against this baseline, and the second one must not start."""
+    fake_windows(refuse=True)
+    with (
+        pytest.raises(runstop.StopError, match="already running"),
+        runstop.claim_eval(tmp_path / "state", 4242),
+    ):
+        pass
+
+
+def test_windows_eval_running_reports_a_held_claim(tmp_path, fake_windows):
+    """`stop --force` asks this question before it signals anything."""
+    fake_windows(refuse=True)
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / runstop.EVAL_PID_FILE).write_text("4242\n")
+    assert runstop.eval_running(tmp_path / "state") == (4242, True)
+
+
+def test_windows_release_unlocks_and_closes_before_deleting(tmp_path, fake_windows, monkeypatch):
+    """Windows refuses to unlink a file that is still open, so the POSIX order
+    (unlink first, deliberately, so no one can take a fresh inode) would leave
+    the pid file behind on every run. Release, close, then delete."""
+    fake_windows()
+    order: list[str] = []
+    real_close = os.close
+    monkeypatch.setattr(runstop, "_unlock", lambda fd: order.append("unlock"))
+    monkeypatch.setattr(runstop.os, "close", lambda fd: (order.append("close"), real_close(fd))[1])
+    real_unlink = Path.unlink
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        lambda self, **kw: (order.append("unlink"), real_unlink(self, **kw))[1],
+    )
+    d = tmp_path / "state"
+    with runstop.claim_eval(d, 4242):
+        pass
+    assert order == ["unlock", "close", "unlink"]
+    assert not (d / runstop.EVAL_PID_FILE).exists()
