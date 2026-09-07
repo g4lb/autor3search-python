@@ -14,11 +14,21 @@ def repo(git_repo):
     (git_repo / "pkg").mkdir()
     (git_repo / "pkg" / "__init__.py").write_text("")
     (git_repo / "pkg" / "mod.py").write_text(
+        # `work` deliberately RETAINS its allocation. The allocation pass
+        # reports blocks still live at the session-end snapshot, so a
+        # benchmark whose allocations are transient leaves the site list
+        # legitimately empty — which made the earlier version of this
+        # fixture pass on macOS and fail on Linux depending on whether the
+        # interpreter happened to still hold the list. Replacing the
+        # contents each call keeps exactly one live allocation attributable
+        # to this module, bounded however many rounds run.
+        "_RETAINED = []\n\n\n"
         "def work():\n"
         "    total = 0\n"
         "    for i in range(5000):\n"
         "        total += i\n"
-        "    return [str(i) for i in range(500)] and total\n"
+        "    _RETAINED[:] = [str(i) for i in range(500)]\n"
+        "    return total\n"
     )
     (git_repo / "tests").mkdir()
     (git_repo / "tests" / "test_mod.py").write_text(
@@ -56,6 +66,48 @@ def test_profile_command_prints_both_sections(repo, capsys):
     # file must actually be named, in both sections.
     assert "work" in out
     assert "mod.py" in out
+
+
+@pytest.fixture
+def transient_repo(git_repo):
+    """A repo whose benchmark allocates only transiently, retaining nothing."""
+    (git_repo / "pkg").mkdir()
+    (git_repo / "pkg" / "__init__.py").write_text("")
+    (git_repo / "pkg" / "mod.py").write_text(
+        "def work():\n    return len([str(i) for i in range(500)])\n"
+    )
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_mod.py").write_text(
+        "from pkg.mod import work\n\n\ndef test_w(benchmark):\n    benchmark(work)\n"
+    )
+    cli_main.main(["init", "-C", str(git_repo)])
+    git(git_repo, "add", "-A")
+    git(git_repo, "commit", "-q", "-m", "init")
+    return git_repo
+
+
+@pytest.mark.slow
+def test_a_transient_benchmark_still_reports_a_peak_and_labels_what_it_measured(transient_repo):
+    """The documented limitation, pinned to the part that is actually stable.
+
+    The allocation pass reports blocks still live at the session-end
+    snapshot, not allocation churn. Whether any given site survives to that
+    snapshot depends on GC timing and the platform's allocator, not on the
+    workload: this same transient benchmark reports `pkg/mod.py` on macOS
+    and nothing on Linux. So the site list cannot be asserted in either
+    direction without writing a test that passes on one OS and fails on the
+    other — which is exactly the bug that made CI red.
+
+    What IS invariant is the framing: a peak figure is always measured, and
+    the output always says which of the two things it is reporting, so a
+    reader never mistakes retained memory for allocation volume. If this is
+    ever reworked to measure churn, this test is what should change.
+    """
+    cfg = config.load(transient_repo / config.CONFIG_PATH)
+    report = profile.run_profile(transient_repo, ["tests/test_mod.py::test_w"], cfg)
+    assert "peak traced memory" in report.mem_top
+    assert "still allocated when the session ended" in report.mem_top
+    assert "retained memory, not total bytes allocated" in report.mem_top
 
 
 @pytest.mark.slow
