@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -20,10 +21,17 @@ from autor3search_python import discover, gitx
 
 _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
 
-# Every module the interpreter named by `python` must be able to import.
-# autor3search_python belongs here because `profile` loads its plugin with
-# `-p autor3search_python.profiling` inside that interpreter, not this one.
-_REQUIRED_MODULES = ("pytest", "pytest_benchmark", "autor3search_python")
+# Modules needed only to run the measurement itself. Missing either one means
+# nothing can be measured at all: a FAIL.
+_MEASURE_MODULES = ("pytest", "pytest_benchmark")
+
+# autor3search_python is needed only because `profile` loads its plugin with
+# `-p autor3search_python.profiling` inside the measuring interpreter, not the
+# one running the harness. `eval` and `bench` never import it there, so its
+# absence is a WARN naming the one thing it breaks, not a repo-wide FAIL.
+_PROFILE_MODULES = ("autor3search_python",)
+
+_REQUIRED_MODULES = _MEASURE_MODULES + _PROFILE_MODULES
 
 
 class Severity(IntEnum):
@@ -141,25 +149,34 @@ def check_disk(directory: str | Path) -> Finding:
     return Finding("disk", f"{free_gb:.1f} GB free", Severity.OK)
 
 
+def _describe(names: Sequence[str]) -> str:
+    verb = "is" if len(names) == 1 else "are"
+    return f"{' and '.join(names)} {verb}"
+
+
 def check_benchmark_tooling(python: str = "") -> Finding:
     """Everything the measuring interpreter must be able to import.
 
-    `autor3search_python` is on the list beside pytest and pytest-benchmark
-    because `profile` runs `-p autor3search_python.profiling` under exactly
-    this interpreter, not under the one running the harness. Configure `python`
-    to a venv without the harness installed and measurement works while
-    profiling fails at collection — a confusing failure at 3am, and one this
-    check exists to turn into a sentence.
+    pytest and pytest-benchmark are a FAIL: without them nothing can be
+    measured at all. `autor3search_python` is only a WARN — it is on this list
+    solely because `profile` runs `-p autor3search_python.profiling` under
+    exactly this interpreter, not under the one running the harness, so its
+    absence breaks `profile` alone. Configure `python` to a venv without the
+    harness installed and `eval` still measures fine while `profile` fails at
+    collection — a confusing failure at 3am if this check does not say so.
     """
     exe = python or sys.executable
     script = (
         "import sys\n"
+        "missing = []\n"
         f"for _name in {list(_REQUIRED_MODULES)!r}:\n"
         "    try:\n"
         "        __import__(_name)\n"
         "    except ImportError:\n"
-        "        print(_name, file=sys.stderr)\n"
-        "        raise SystemExit(1)\n"
+        "        missing.append(_name)\n"
+        "if missing:\n"
+        "    print(' '.join(missing), file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
         "import pytest, pytest_benchmark\n"
         "print(pytest.__version__, pytest_benchmark.__version__)\n"
     )
@@ -168,14 +185,31 @@ def check_benchmark_tooling(python: str = "") -> Finding:
     except (OSError, subprocess.SubprocessError) as e:
         return Finding("pytest-benchmark", f"could not run {exe}: {e}", Severity.FAIL)
     if proc.returncode != 0:
-        missing = proc.stderr.strip().splitlines()
-        name = missing[-1] if missing and missing[-1] in _REQUIRED_MODULES else ""
-        what = f"{name} is" if name else "pytest, pytest-benchmark or autor3search-python is"
+        missing = set(proc.stderr.strip().split())
+        fix = (
+            f"Fix with: {exe} -m pip install "
+            f"{' '.join(m.replace('_', '-') for m in _REQUIRED_MODULES)}"
+        )
+        hard = [m for m in _MEASURE_MODULES if m in missing]
+        soft = [m for m in _PROFILE_MODULES if m in missing]
+        if hard:
+            return Finding(
+                "pytest-benchmark",
+                f"{_describe(hard)} not importable by {exe} — nothing can be measured "
+                f"without it. {fix}",
+                Severity.FAIL,
+            )
+        if soft:
+            return Finding(
+                "pytest-benchmark",
+                f"{_describe(soft)} not importable by {exe} — `profile` needs it to load "
+                f"its plugin there; `eval` and `bench` do not. {fix}",
+                Severity.WARN,
+            )
         return Finding(
             "pytest-benchmark",
-            f"{what} not importable by {exe} — nothing can be measured without it. "
-            f"Fix with: {exe} -m pip install "
-            f"{' '.join(m.replace('_', '-') for m in _REQUIRED_MODULES)}",
+            f"unexpected failure importing tooling under {exe} (exit {proc.returncode}): "
+            f"{proc.stderr.strip()!r}. {fix}",
             Severity.FAIL,
         )
     versions = proc.stdout.strip().split()
