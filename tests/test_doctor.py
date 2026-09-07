@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import config, doctor
+from autor3search_python import config, doctor, state
 from autor3search_python.cli import main as cli_main
 from tests.conftest import git
 
@@ -339,3 +339,55 @@ def test_the_tooling_check_probes_every_required_module(monkeypatch):
     script = seen[0][-1]
     for name in ("pytest", "pytest_benchmark", "autor3search_python"):
         assert name in script
+
+
+# --- state filesystem -------------------------------------------------------
+
+
+def test_check_state_fs_is_ok_when_repo_and_state_share_a_filesystem(git_repo):
+    """The default test setup: state_home (from the autouse `state_home`
+    fixture in conftest.py) and the repo both land under the same pytest
+    temp root, so they share a filesystem."""
+    finding = doctor.check_state_fs(git_repo)
+    assert finding.severity is doctor.Severity.OK
+    assert finding.name == "state filesystem"
+
+
+def test_check_state_fs_warns_when_filesystems_differ(git_repo, monkeypatch):
+    """Point AUTOR3SEARCH_PYTHON_STATE_HOME at a tmpfs or a second volume and
+    the pinned baseline worktree ends up on different storage than the
+    repository being measured — invisible in the numbers, and fatal for an
+    I/O-bound benchmark. Real separate filesystems are not available in every
+    test environment, so os.stat's st_dev is faked directly: check_state_fs
+    calls root.stat() and then home_probe.stat(), in that order, with nothing
+    else in between that would also call .stat()."""
+
+    class _FakeStat:
+        def __init__(self, dev):
+            self.st_dev = dev
+
+    calls = iter([_FakeStat(1), _FakeStat(2)])
+    monkeypatch.setattr(Path, "stat", lambda self, *a, **k: next(calls))
+    finding = doctor.check_state_fs(git_repo)
+    assert finding.severity is doctor.Severity.WARN
+    assert "different filesystems" in finding.detail
+
+
+def test_check_state_fs_is_included_in_the_full_check(git_repo):
+    findings = doctor.check(git_repo)
+    assert by_name(findings, "state filesystem").severity is doctor.Severity.OK
+
+
+def test_check_state_fs_reports_a_broken_state_home_env_as_not_applicable(monkeypatch, git_repo):
+    monkeypatch.setenv(state.STATE_HOME_ENV, "relative/path")  # state.state_home() rejects this
+    finding = doctor.check_state_fs(git_repo)
+    assert finding.severity is doctor.Severity.NOT_APPLICABLE
+
+
+def test_nearest_existing_ancestor_walks_up_to_a_real_directory(tmp_path):
+    missing = tmp_path / "a" / "b" / "c"
+    assert doctor._nearest_existing_ancestor(missing) == tmp_path
+
+
+def test_nearest_existing_ancestor_returns_the_path_itself_when_it_exists(tmp_path):
+    assert doctor._nearest_existing_ancestor(tmp_path) == tmp_path
