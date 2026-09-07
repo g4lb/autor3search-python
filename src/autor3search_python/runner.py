@@ -89,6 +89,31 @@ def _compile_exclude() -> str:
     return rf"(^|/)(\.[^/]|({names})(/|$))"
 
 
+def validate_node_ids(node_ids: Sequence[str]) -> None:
+    """Raise ValueError if any node id would be read as a command-line option
+    rather than a path.
+
+    The one check every node id source (auto-discovery, config.toml's
+    `benchmarks`, a saved baseline.json) must funnel through before becoming
+    argv. `discover._walk` skips '.'- and '_'-prefixed directories but not
+    '-'-prefixed ones, so a repository containing `-p/test_a.py` yields the
+    node id `-p/test_a.py::test_b`. A trailing "--" does not defuse this by
+    itself: pytest's pluginmanager does its own raw scan for "-p" (and "-o")
+    BEFORE the normal argv parse that "--" would otherwise terminate (see
+    `consider_preparse` in `_pytest/config/__init__.py`), so this id would be
+    read as the "-p" option with an attached plugin name regardless of where
+    "--" sits on the command line. This check is the one that actually holds
+    for every option, "-p" included; the "--" callers also place is defense
+    in depth for anything this check might miss.
+    """
+    bad = [n for n in node_ids if n.startswith("-")]
+    if bad:
+        raise ValueError(
+            f"benchmark node id(s) {bad!r} start with '-', which would be parsed as a "
+            f"pytest command-line option rather than a path"
+        )
+
+
 def _cap(raw: bytes) -> str:
     text = raw.decode("utf-8", errors="replace")
     if len(raw) <= CAP_BYTES:
@@ -238,6 +263,7 @@ class Runner:
 
     def bench(self, node_ids: Sequence[str], json_path: str | Path, cfg: Config) -> Result:
         """One measurement round for the declared benchmarks."""
+        validate_node_ids(node_ids)
         args = [
             "-m",
             "pytest",
@@ -254,6 +280,13 @@ class Runner:
         ]
         if cfg.gc == "disabled":
             args.append("--benchmark-disable-gc")
+        # "--" before the node ids: they come from discover.benchmarks by way
+        # of config.toml and baseline.json, never typed at a shell, so nothing
+        # upstream would notice one that happens to start with "-". Without
+        # this separator a node id like "-p/test_a.py::test_b" (from a
+        # directory literally named "-p") is parsed as another pytest option
+        # rather than a path, i.e. argument injection into the command line.
+        args.append("--")
         args.extend(node_ids)
         return self.python_run(*args)
 

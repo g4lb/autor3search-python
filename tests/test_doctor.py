@@ -254,15 +254,25 @@ def test_doctor_output_labels_a_failure(tmp_path, capsys):
 def test_doctor_uses_the_configured_interpreter(git_repo, capsys):
     """cfg.python, when set, is the interpreter that will actually run the
     benchmarks — doctor must check tooling against it, not against whatever
-    interpreter happens to be running the harness."""
+    interpreter happens to be running the harness.
+
+    Points `python` at a real, executable-but-not-actually-python script
+    rather than a nonexistent path: config.validate now refuses a `python`
+    that is not an existing executable (it becomes argv[0] of every gate and
+    measurement subprocess), so a nonexistent path can no longer reach this
+    far — see test_config.py's rejection tests for that check itself. This
+    still exercises the same wiring: doctor must report on the interpreter
+    named in config.toml, not on whichever one is running the harness."""
     cfg_dir = git_repo / ".autor3search"
     cfg_dir.mkdir()
-    bogus = "/nonexistent/python-for-doctor-wiring-test"
-    (cfg_dir / "config.toml").write_text(f'python = "{bogus}"\n')
-    assert config.load(cfg_dir / "config.toml").python == bogus  # sanity on the fixture itself
+    fake_python = git_repo / "fake-python"
+    fake_python.write_text("#!/bin/sh\necho 'not really python' 1>&2\nexit 1\n")
+    fake_python.chmod(0o755)
+    (cfg_dir / "config.toml").write_text(f'python = "{fake_python}"\n')
+    assert config.load(cfg_dir / "config.toml").python == str(fake_python)  # sanity
 
     cli_main.main(["doctor", "-C", str(git_repo)])
-    assert bogus in capsys.readouterr().out
+    assert str(fake_python) in capsys.readouterr().out
 
 
 def test_missing_autor3search_python_is_a_warning_naming_profile_not_a_failure(monkeypatch):

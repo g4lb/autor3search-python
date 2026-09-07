@@ -182,6 +182,10 @@ def run_profile(
     root: str | Path, node_ids: Sequence[str], cfg: Config, log: IO[str] | None = None
 ) -> Report:
     """Profile the declared benchmarks, in two passes, and return the summaries."""
+    try:
+        runner.validate_node_ids(node_ids)
+    except ValueError as e:
+        raise ProfileError(str(e)) from e
     root = Path(root)
     out_dir = root / PROFILE_DIR
     # PROFILE_DIR is a fixed, gitignored, multi-component path (see cli/init.py)
@@ -259,6 +263,7 @@ def run_profile(
             "autor3search_python.profiling",
             "--import-mode=importlib",
             *extra_args,
+            "--",  # see runner.validate_node_ids: node_ids are untrusted, never shell-typed
             *node_ids,
         )
         if res.timed_out:

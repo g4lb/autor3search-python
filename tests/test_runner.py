@@ -215,6 +215,54 @@ def test_pytest_gate_resolves_modules_the_same_way_bench_does(tmp_path, monkeypa
     assert "--import-mode=importlib" in bench_args
 
 
+def test_bench_places_node_ids_after_a_separator(tmp_path, monkeypatch):
+    """Defense in depth alongside the explicit '-' check below: a bare `--`
+    stops pytest's normal argv parser from treating a node id as another
+    option for every flag that respects it (e.g. -x, -k, --co) — not "-p"
+    itself, which pytest scans for before "--" is honored; see the
+    dedicated "-p" test for that narrower, separately-guarded case."""
+    seen = []
+    rr = r(tmp_path)
+    monkeypatch.setattr(
+        rr, "python_run", lambda *a: seen.append(a) or runner.Result((), "", "", 0, False, 0.0)
+    )
+    rr.bench(
+        ["tests/test_x.py::test_y", "tests/test_z.py::test_w"],
+        tmp_path / "out.json",
+        config.default(),
+    )
+    (args,) = seen
+    assert args[args.index("--") + 1 :] == ("tests/test_x.py::test_y", "tests/test_z.py::test_w")
+
+
+def test_bench_refuses_any_node_id_starting_with_a_dash(tmp_path):
+    with pytest.raises(ValueError, match="start with"):
+        r(tmp_path).bench(
+            ["-x", "tests/test_x.py::test_y"], tmp_path / "out.json", config.default()
+        )
+
+
+def test_bench_refuses_a_node_id_that_looks_like_a_pytest_option(tmp_path):
+    """Demonstrated attack: discover._walk skips '.'- and '_'-prefixed
+    directories but not '-'-prefixed ones, so a repository containing
+    `-p/test_a.py` yields the node id `-p/test_a.py::test_b`.
+
+    A trailing "--" does NOT defuse this one: pytest's pluginmanager does
+    its own raw scan for "-p" (and "-o") BEFORE the normal argv parse that
+    "--" would otherwise terminate (see consider_preparse in
+    _pytest/config/__init__.py), so "-p/test_a.py::test_b" is read as the
+    "-p" option with an attached plugin name regardless of where "--" sits.
+    `bench` must refuse such an id outright rather than pass it through."""
+    evil_dir = tmp_path / "-p"
+    evil_dir.mkdir()
+    (evil_dir / "test_a.py").write_text("def test_b(benchmark):\n    benchmark(lambda: 1)\n")
+    cfg = config.default().__class__(benchtime="200ms", min_rounds=1)
+    env = runner.bench_env(tmp_path, cfg)
+    rr = runner.Runner(tmp_path, 30, env=env, python=cfg.python)
+    with pytest.raises(ValueError, match="-p/test_a.py::test_b"):
+        rr.bench(["-p/test_a.py::test_b"], tmp_path / "out.json", cfg)
+
+
 def test_bench_env_disables_pytest_plugin_autoload(tmp_path):
     """Every entry-point ("pytest11") plugin autoloading would find on
     sys.path — including one an agent supplies itself via a fabricated
