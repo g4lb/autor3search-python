@@ -57,7 +57,29 @@ def test_full_run(demo_repo):
 
     # init discovers the benchmark and refuses nothing.
     assert cli_main.main(["init", "-C", str(repo)]) == 0
-    assert (repo / ".autor3search" / "config.toml").exists()
+    cfg_path = repo / ".autor3search" / "config.toml"
+    assert cfg_path.exists()
+
+    # Raise the minimum effect size well above the default 1%. The no-op step
+    # below MUST discard, but on a loaded shared runner a no-op's measured
+    # delta can land a point or two from zero with a convincing p-value: CI
+    # has scored one at -1.36%, clearing both the default 1% floor and the
+    # corrected significance bar. That is the residual Type-I error the
+    # README's Limitations section documents rather than a bug in the
+    # decision rule, but it makes for a flaky test.
+    #
+    # 10% sits between the two effects with room on both sides: roughly seven
+    # times the largest no-op delta observed, and well clear of the KEEP step
+    # below, which turns a quadratic per-character concatenation into a single
+    # join and measures -25.8% (score 0.7418) on the machine this was written
+    # on. The Go original raises the same floor for the same reason; it uses
+    # 15%, against a fixture whose true effect is an order of magnitude rather
+    # than this one's quarter, so the ratio here is the thing being matched,
+    # not the number.
+    raised = cfg_path.read_text().replace("min_effect_pct = 1.0", "min_effect_pct = 10.0")
+    assert "min_effect_pct = 10.0" in raised, "init's config no longer has the key this rewrites"
+    cfg_path.write_text(raised)
+
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "autor3search-python init")
 
