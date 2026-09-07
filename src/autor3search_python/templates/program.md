@@ -162,8 +162,17 @@ not a verdict at all but an interrupted experiment; see "Stopping" below.
 `reason` is a stable, machine-readable code: `improved`,
 `no_significant_improvement`, `improvement_below_min_effect`,
 `guard_regression`, `scope_violation`, `config_changed`, `new_test_file`,
-`symlink_swap`, `baseline_tampered`, `compile_failed`, `import_failed`,
-`tests_failed`, `measure_failed`, `timeout`, `stop_forced`.
+`symlink_swap`, `baseline_tampered`, `freeze_drift`, `compile_failed`,
+`import_failed`, `tests_failed`, `measure_failed`, `timing_implausible`,
+`timeout`, `stop_forced`.
+
+Four of those are integrity gates rather than judgements on your change.
+`symlink_swap`, `baseline_tampered`, `freeze_drift` and `timing_implausible`
+all mean the harness could not trust what it was about to measure — a frozen
+file that moved under it, or self-reported timings its own clock contradicts.
+All four arrive as FAIL. Reset the commit as you would for any FAIL and say
+so plainly in the next `-desc`; do not rewrite your change to try to satisfy
+them, and do not read `timing_implausible` as "too fast to be believed."
 
 Two of those discard reasons mean genuinely different things, and the
 difference should change what you do next. `no_significant_improvement`
