@@ -275,6 +275,10 @@ process).
 | Edit `.gitignore` at all | `scope_violation` — it decides what every git-based gate here can see. A modification to a *tracked* file always shows in the diff, so what an ignore line can hide is a **new untracked file**: an out-of-scope module the scope gate never hears about and the interpreter imports happily. `init` writes the harness's own entries before `baseline`, so a normal run has them at baseline and never trips this |
 | Set `PYTEST_ADDOPTS` or `PYTEST_PLUGINS` in the environment `eval` runs in | Stripped by `bench_env` before any gate or measurement starts — the agent owns that environment, and `PYTEST_ADDOPTS` is a `pytest.ini` it never has to write down |
 | Edit the pinned baseline worktree in place, to make the baseline look slow | Detected (not proven-impossible — see [Limitations](#limitations)) when the recorded `measure_commit` no longer matches the worktree's actual HEAD: `baseline_tampered` |
+| Symlink-swap `run.log`, `results.tsv`, or the `profile` output directory | These names are gitignored and deliberately waved through the scope gate — they are the harness's own output, not something the agent declares. Every path under them is checked with the same symlink/ancestor-escape containment `freeze.py` uses (factored into `containment.py` so there is one implementation, not a second copy that could drift): a symlink at the path, or a symlinked ancestor directory, is refused before the open, append, `mkdir`, or `unlink` that would otherwise follow it outside the repository |
+| Drop a fabricated `pytest11` entry-point plugin (an `evil-1.0.dist-info/entry_points.txt` at the repository root) | pytest's plugin autoloading is disabled (`PYTEST_DISABLE_PLUGIN_AUTOLOAD`) on every gate and measurement subprocess; only the plugins this harness names explicitly — pytest-benchmark included — are loaded. A plugin discovered this way would otherwise run inside the very process that times the benchmark |
+| Rewrite a frozen file (e.g. `conftest.py`) via code that runs *during* a gate, after `freeze.restore` already ran | `freeze.verify` re-checks every frozen file immediately before the bench rounds start, not just once after restore, and fails the run (`freeze_drift`) on any difference — the compile, import and pytest gates in between all execute the candidate's own code with its tree on `PYTHONPATH` |
+| Rig pytest-benchmark's own accounting from in-scope source so it under-reports its timings (see [Limitations](#limitations)) | Only partially closable — the timer runs inside the process being measured. As a tripwire for the gross case: the harness's own wall-clock time for each bench subprocess (which the candidate cannot forge) is compared against that subprocess's *self-reported* total; a candidate-side gap five times wider than the baseline's own overhead on the same run fails as `timing_implausible` |
 
 ## Scoring
 
@@ -333,6 +337,27 @@ Ported from the Go original:
 - One metric source. No `asv`-style backend, no analogue of `-race`.
 - No allocation column in `results.tsv` (see below) — the allocation story
   moved entirely to `profile`.
+- **The benchmark timer runs inside the process executing the candidate's
+  code, and this is not fully closable.** `bench_env` puts the candidate
+  tree on `PYTHONPATH` and pytest imports its modules directly into the
+  process that then times them — there is no sandbox boundary between "code
+  being measured" and "code doing the measuring". A determined agent editing
+  in-scope source can still influence the reported numbers: entry-point
+  plugin autoloading is disabled and `freeze.verify` re-runs immediately
+  before measurement (see the table above), which together close the
+  cheapest routes — a fabricated plugin, or rewriting a frozen file mid-gate
+  — but neither one stops in-scope, non-frozen source from monkeypatching
+  pytest-benchmark's own accounting at import time. The harness-side timing
+  check (`timing_implausible`) is a tripwire for a GROSS fraud only — it
+  compares each side's independently-measured wall-clock time against its
+  own self-reported total and fails when the candidate's ratio is five times
+  wider than the baseline's on the same run. It caught the demonstrated
+  attack (a `Stats.update` monkeypatch dividing every reported duration by
+  ten, which previously scored `KEEP, score 0.1006 (-89.94%)`; it now fails
+  as `timing_implausible`). It is not, and does not claim to be, a general
+  timing audit: a candidate that skews its own numbers by a few percent —
+  within the normal machine-to-machine variance in interpreter startup and
+  collection overhead — is not caught by anything in this list.
 
 Python-specific, new in this port:
 

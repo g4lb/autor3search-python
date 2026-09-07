@@ -9,6 +9,7 @@ from autor3search_python import (
     freeze,
     gitx,
     pipeline,
+    runner,
     state,
     verdict,
 )
@@ -543,6 +544,29 @@ def test_a_symlinked_frozen_file_is_a_fail_not_a_crash(run, monkeypatch, tmp_pat
     result, _ = pipeline.evaluate(options(run, monkeypatch))
     assert result.status is verdict.Status.FAIL
     assert result.reason is verdict.Reason.SYMLINK_SWAP
+
+
+def test_a_frozen_file_rewritten_during_the_gates_fails_before_measurement(run, monkeypatch):
+    """freeze.restore (step 2) runs before compileall, the import gate and the
+    full test suite — three subprocesses that execute the candidate's OWN
+    code with its tree on PYTHONPATH. Something that runs during one of them
+    (a plugin hook, a fixture, an import-time side effect — stood in for
+    here by the stubbed pytest_gate itself) rewriting a frozen file after
+    restore must be caught before the bench rounds start, not measured as
+    written."""
+    repo, _, _ = run
+    opts = options(run, monkeypatch)  # skip_gates=True: pytest_gate stubbed to a clean pass
+
+    def rogue_pytest_gate(self):
+        (repo / "tests" / "conftest.py").write_text("# rewritten mid-gate\n")
+        return runner.Result((), "", "", 0, False, 0.0)
+
+    monkeypatch.setattr("autor3search_python.runner.Runner.pytest_gate", rogue_pytest_gate)
+    result, measurements = pipeline.evaluate(opts)
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.FREEZE_DRIFT
+    assert measurements is None
+    assert "tests/conftest.py" in result.message
 
 
 # --- worktree integrity ---------------------------------------------------

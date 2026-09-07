@@ -157,3 +157,30 @@ def test_compare_all_is_sorted_by_name():
             base.record(name, v)
             cand.record(name, v)
     assert [d.name for d in benchio.compare_all(base, cand)] == ["a", "b"]
+
+
+def test_total_reported_seconds_sums_the_total_field():
+    doc = {
+        "benchmarks": [
+            {"fullname": "a", "stats": {"total": 0.5, "median": 0.1, "rounds": 5}},
+            {"fullname": "b", "stats": {"total": 1.5, "median": 0.3, "rounds": 5}},
+        ]
+    }
+    assert benchio.total_reported_seconds(doc) == pytest.approx(2.0)
+
+
+def test_total_reported_seconds_falls_back_to_median_times_rounds():
+    doc = {"benchmarks": [{"fullname": "a", "stats": {"median": 0.2, "rounds": 10}}]}
+    assert benchio.total_reported_seconds(doc) == pytest.approx(2.0)
+
+
+def test_total_reported_seconds_accepts_a_json_string():
+    doc = json.dumps({"benchmarks": [{"fullname": "a", "stats": {"total": 1.0}}]})
+    assert benchio.total_reported_seconds(doc) == pytest.approx(1.0)
+
+
+def test_total_reported_seconds_is_none_when_nothing_is_usable():
+    assert benchio.total_reported_seconds({"benchmarks": [{"fullname": "a", "stats": {}}]}) is None
+    assert benchio.total_reported_seconds("not json") is None
+    assert benchio.total_reported_seconds({"benchmarks": "nope"}) is None
+    assert benchio.total_reported_seconds({}) is None

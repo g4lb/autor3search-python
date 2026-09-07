@@ -37,6 +37,13 @@ class Reason(StrEnum):
     NEW_TEST_FILE = "new_test_file"
     SYMLINK_SWAP = "symlink_swap"
     BASELINE_TAMPERED = "baseline_tampered"
+    # A frozen file matched its baseline hash right after `freeze.restore`
+    # (step 2), but the gates that ran between then and measurement —
+    # compileall, the import gate, the full test suite — execute the
+    # candidate's OWN code, in subprocesses that put the candidate tree on
+    # PYTHONPATH. Distinct from SYMLINK_SWAP: nothing here says HOW the file
+    # changed, only that it no longer matches what was measured against.
+    FREEZE_DRIFT = "freeze_drift"
     COMPILE = "compile_failed"
     IMPORT = "import_failed"
     TESTS = "tests_failed"
@@ -45,6 +52,12 @@ class Reason(StrEnum):
     # Ruling R7: a measurement round itself crashing has no other honest
     # reason in this vocabulary — reporting it as COMPILE would be untrue.
     MEASURE = "measure_failed"
+    # The harness's own wall-clock timing of a bench subprocess and that
+    # subprocess's self-reported numbers disagree by a factor wide enough
+    # that no legitimate machine explains it. See
+    # measure.TimingImplausibleError for exactly what this does and does not
+    # catch — it is a tripwire for a gross fraud, not a general timing audit.
+    TIMING_IMPLAUSIBLE = "timing_implausible"
 
 
 _EXIT_CODES = {

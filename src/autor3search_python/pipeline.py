@@ -457,6 +457,30 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
             None,
         )
 
+    # 5c. Re-verify the frozen files immediately before measurement begins.
+    #     `freeze.restore` (step 2) ran before compileall, the import gate and
+    #     the full test suite — three subprocesses that execute the
+    #     candidate's OWN code with the candidate tree on PYTHONPATH. Nothing
+    #     re-checked conftest.py or a frozen test file between then and now,
+    #     so code running during those gates (a plugin hook, a fixture, an
+    #     import-time side effect) could rewrite one and have it measured as
+    #     written rather than as restored. Checked here, right before the
+    #     bench rounds start, rather than only trusting the step-2 restore.
+    drifted = freeze.verify(root, manifest)
+    if drifted:
+        return (
+            verdict.gate(
+                verdict.Status.FAIL,
+                verdict.Reason.FREEZE_DRIFT,
+                f"frozen file(s) changed between restore and measurement: {drifted} — "
+                f"something that ran during the gates rewrote a file this run pinned. The "
+                f"gates above ran the candidate's own code with its tree on PYTHONPATH, so "
+                f"this is not necessarily restore's fault; investigate before trusting any "
+                f"number from this experiment.",
+            ),
+            None,
+        )
+
     # 6. Measure, interleaved against the pinned baseline worktree.
     measure_fn = opts.measure_fn or measure.run
     try:
@@ -469,6 +493,10 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
                 log=log,
             )
         )
+    except measure.TimingImplausibleError as e:
+        # Checked before the general MeasureError below: a real verdict-
+        # worthy tampering signal (FAIL), not a harness malfunction (CRASH).
+        return verdict.gate(verdict.Status.FAIL, verdict.Reason.TIMING_IMPLAUSIBLE, str(e)), None
     except measure.MeasureError as e:
         # Ruling R7: a measurement round crashing has no honest reason in this
         # vocabulary but MEASURE — reporting it as COMPILE would send an agent

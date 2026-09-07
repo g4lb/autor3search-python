@@ -221,7 +221,18 @@ def run_profile(
         (
             profiling.CPU_ENV,
             cpu_path,
-            ("--benchmark-only", "--benchmark-max-time=0.5", "--benchmark-min-rounds=1"),
+            # bench_env disables pytest's entry-point plugin autoloading (see
+            # runner._DISABLE_AUTOLOAD_ENV), and pytest-benchmark is itself an
+            # entry-point plugin, so this pass — the one that still relies on
+            # its timing loop — must load it explicitly or `--benchmark-*`
+            # below is "unrecognized arguments".
+            (
+                "-p",
+                runner.BENCHMARK_PLUGIN,
+                "--benchmark-only",
+                "--benchmark-max-time=0.5",
+                "--benchmark-min-rounds=1",
+            ),
         ),
         (profiling.MEM_ENV, mem_path, ("-p", "no:benchmark")),
     )
