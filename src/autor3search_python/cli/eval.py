@@ -31,6 +31,34 @@ def best_bench_delta(deltas: Sequence[benchio.Delta]) -> float:
     return min((d.pct_change for d in deltas), default=0.0)
 
 
+# Largest value, in seconds, still shown in this unit — smallest last. A
+# sub-microsecond benchmark rendered in milliseconds prints as "0.000ms" for
+# every row; picking the unit from the data keeps the numbers readable.
+_UNITS: tuple[tuple[str, float], ...] = (
+    ("s", 1.0),
+    ("ms", 1e-3),
+    ("µs", 1e-6),
+    ("ns", 1e-9),
+)
+
+
+def pick_unit(seconds: Sequence[float]) -> tuple[str, float]:
+    """One (label, seconds-per-unit) pair for an entire table of `seconds` values.
+
+    Chosen once from the whole column — here, its median — and applied to
+    every row, never picked per row: a table mixing "3.20ms" and "1.10µs"
+    down one column would be unreadable in a different way than an all-zero one.
+    """
+    positive = sorted(v for v in seconds if v > 0)
+    if not positive:
+        return _UNITS[1]  # ms: a reasonable default for an all-zero/empty table
+    median = positive[len(positive) // 2]
+    for label, per_unit in _UNITS:
+        if median >= per_unit:
+            return label, per_unit
+    return _UNITS[-1]
+
+
 def build_json(
     result: verdict.Result,
     base: state.Baseline,
@@ -54,11 +82,13 @@ def build_json(
 
 def _print_human(result: verdict.Result, measurements: pipeline.Measurements | None) -> None:
     if measurements and measurements.time:
-        print("benchmark                                             base      cand    change")
+        unit, per_unit = pick_unit([d.base_center for d in measurements.time])
+        base_col, cand_col = f"base ({unit})", f"cand ({unit})"
+        print(f"benchmark{'':<41}{base_col:>10}{cand_col:>10}    change")
         for d in measurements.time:
             print(
-                f"{d.name[:50]:<50}  {d.base_center * 1e3:8.3f}ms "
-                f"{d.cand_center * 1e3:8.3f}ms  {d.pct_change:+7.2f}%  "
+                f"{d.name[:50]:<50}  {d.base_center / per_unit:7.3f}{unit:>3} "
+                f"{d.cand_center / per_unit:7.3f}{unit:>3}  {d.pct_change:+7.2f}%  "
                 f"(p={d.p:.4f}{'' if d.significant else ' n.s.'})"
             )
         print()
