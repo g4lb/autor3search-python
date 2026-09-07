@@ -39,15 +39,19 @@ timings out of [pytest-benchmark](https://pytest-benchmark.readthedocs.io/).
 
 ## Start here
 
-> **POSIX only (Linux, macOS). Windows is not supported and not tested** —
-> `autor3search-python` has never been run on it, and `eval` refuses to start
-> there unless you explicitly override that (see below). Three guarantees
-> depend on POSIX process groups and are simply absent on Windows: the
-> concurrency guard that stops two evals from running against the same
-> pinned baseline at once; `stop --force`'s ability to signal a running eval
-> at all; and killing a timed-out benchmark's whole process tree rather than
-> leaking grandchildren that keep burning CPU. `doctor` reports all three by
-> name if you run it anyway.
+> **POSIX only (Linux, macOS). Windows is not supported and not tested.**
+> `autor3search-python` has never been run on Windows, and `eval` refuses to
+> start there unless you explicitly override it. Three guarantees depend on
+> POSIX process groups and are simply absent there:
+>
+> - the concurrency guard that stops two evals from running against the same
+>   pinned baseline at once;
+> - `stop --force`'s ability to signal a running eval at all;
+> - killing a timed-out benchmark's whole process tree, rather than leaking
+>   grandchildren that keep burning CPU.
+>
+> `doctor` reports all three by name if you run it anyway. See
+> [Limitations](#limitations) for the override.
 
 If you are a coding agent that has just been pointed at this README, this is
 everything you need:
