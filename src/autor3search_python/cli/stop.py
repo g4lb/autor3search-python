@@ -20,6 +20,10 @@ from autor3search_python import gitx, runstop
 from autor3search_python.cli import runctx
 from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
 
+# Computed once, same as runstop._POSIX: `_signal_group` below calls
+# os.killpg, which does not exist off this platform.
+_POSIX = os.name == "posix"
+
 
 def group_signal_target(pid: int) -> int:
     """The kill target for a process GROUP, refusing every unsafe value.
@@ -94,6 +98,23 @@ def run(args: list[str]) -> int:
         runstop.clear_eval_pid(ctx.state_dir)
     else:
         if running:
+            if not _POSIX:
+                # `_signal_group` calls os.killpg, which does not exist on this
+                # platform (AttributeError, not a clean refusal) — so this must
+                # be caught before it is ever called, not after it raises.
+                print(
+                    f"autor3search-python stop: cannot signal the running eval (pid {pid}) "
+                    "on this platform — stop --force relies on POSIX process groups, which "
+                    "do not exist here.",
+                    file=sys.stderr,
+                )
+                print(
+                    "The graceful stop request has still been written and will be read at "
+                    "the next verdict. To abandon the current experiment now, interrupt the "
+                    "running agent yourself (e.g. Ctrl+C in its terminal).",
+                    file=sys.stderr,
+                )
+                return EXIT_USAGE
             try:
                 _signal_group(pid)
                 print(f"signalled the running eval (pid {pid}) to abandon its experiment.")

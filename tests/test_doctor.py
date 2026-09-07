@@ -57,6 +57,45 @@ def test_outside_a_repository_is_a_failure(tmp_path):
     assert by_name(doctor.check(tmp_path), "git repo").severity is doctor.Severity.FAIL
 
 
+def test_doctor_reports_windows_as_unsupported(monkeypatch):
+    """This machine cannot actually run Windows, so this fakes only the branch
+    condition (os.name) and asserts our own logic fires — not real Windows
+    behaviour. It must name the three concrete gaps, not just say
+    "unsupported": the concurrency guard, `stop --force`, and the timeout's
+    grandchild leak. A weak `"FAIL" in detail` or `"OK" not in detail`
+    assertion would still pass if the severity itself were wrong (see the
+    project history of an `assert "OK" in out` that passed when every
+    severity label was remapped to "OK"), so the severity is checked by
+    identity, not string-sniffed out of the detail.
+
+    Patches doctor._POSIX rather than the real os.name: os.name also drives
+    which concrete Path class pathlib hands back, so patching it globally on
+    a POSIX test runner corrupts every Path() constructed for the rest of the
+    test (observed here as pathlib.UnsupportedOperation from pytest's own
+    reporting machinery). Patching the module's own cached flag is exactly
+    what production computes it into once at import (see doctor._POSIX,
+    mirroring runstop._POSIX and runner._POSIX) — it exercises the same
+    branch without destabilizing pathlib.
+    """
+    monkeypatch.setattr(doctor, "_POSIX", False)
+    f = doctor.check_platform()
+    assert f.name == "platform"
+    assert f.severity is doctor.Severity.FAIL
+    assert "claim_eval always reports success" in f.detail
+    assert "stop --force" in f.detail and "cannot signal" in f.detail
+    assert "grandchildren keep running" in f.detail
+    assert "Do not trust a number produced here." in f.detail
+
+
+def test_doctor_command_still_exits_zero_when_platform_check_fails(monkeypatch, tmp_path, capsys):
+    """doctor reports, it never gates — even a FAIL-severity platform check
+    must not change the command's own exit code."""
+    monkeypatch.setattr(doctor, "_POSIX", False)
+    assert cli_main.main(["doctor", "-C", str(tmp_path)]) == 0
+    labels = label_by_name(capsys.readouterr().out, doctor.check(tmp_path))
+    assert labels["platform"] == "FAIL"
+
+
 def test_coverage_in_addopts_is_warned_about(tmp_path):
     """Coverage instruments every call and destroys every timing."""
     (tmp_path / "pyproject.toml").write_text(

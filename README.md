@@ -39,6 +39,16 @@ timings out of [pytest-benchmark](https://pytest-benchmark.readthedocs.io/).
 
 ## Start here
 
+> **POSIX only (Linux, macOS). Windows is not supported and not tested** —
+> `autor3search-python` has never been run on it, and `eval` refuses to start
+> there unless you explicitly override that (see below). Three guarantees
+> depend on POSIX process groups and are simply absent on Windows: the
+> concurrency guard that stops two evals from running against the same
+> pinned baseline at once; `stop --force`'s ability to signal a running eval
+> at all; and killing a timed-out benchmark's whole process tree rather than
+> leaking grandchildren that keep burning CPU. `doctor` reports all three by
+> name if you run it anyway.
+
 If you are a coding agent that has just been pointed at this README, this is
 everything you need:
 
@@ -329,6 +339,18 @@ them should not be over-read:
   reason to keep burning experiments on it.
 
 ## Limitations
+
+**POSIX only (Linux, macOS); Windows is not supported and not tested.** See
+the note under [Start here](#start-here) for what specifically breaks —
+`doctor` names the same three gaps as a FAIL when run on a non-POSIX
+platform. `eval` refuses to start there at all, because the whole point of
+this tool is a number you can stand behind and it cannot produce a
+trustworthy one on a platform none of its safety mechanisms have ever run
+on. Set `AUTOR3SEARCH_PYTHON_ALLOW_UNSUPPORTED_PLATFORM=1` to run it anyway,
+having read the three gaps above. `stop --force` also refuses to signal a
+running eval on such a platform (it would otherwise crash trying), and
+prints instead: the graceful stop request is still written, and you should
+interrupt the agent yourself.
 
 Ported from the Go original:
 
