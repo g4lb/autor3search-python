@@ -3,6 +3,7 @@ import pytest
 from autor3search_python import runstop, state
 from autor3search_python.cli import main as cli_main
 from autor3search_python.cli import stop as cli_stop
+from autor3search_python.cli.main import EXIT_USAGE
 from tests.conftest import git
 
 
@@ -74,3 +75,31 @@ def test_group_signal_target_refuses_an_unsafe_pid(pid):
 
 def test_group_signal_target_negates_a_real_pid():
     assert cli_stop.group_signal_target(4242) == -4242
+
+
+def test_force_on_non_posix_refuses_to_signal_and_reports_clearly(started, monkeypatch, capsys):
+    """This machine cannot actually run Windows, so this fakes only os.name and
+    checks our own guard fires — not real Windows behaviour. Without the guard,
+    `_signal_group` calls os.killpg, which does not exist on that platform:
+    an AttributeError traceback, not a clean refusal. `_signal_group` is
+    deliberately NOT monkeypatched here (unlike test_force_signals_the_running_eval)
+    so a regression that removes the guard would hit the real os.killpg call
+    and fail with a traceback instead of passing silently."""
+    monkeypatch.setattr(cli_stop, "_POSIX", False)
+    monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
+    code = cli_main.main(["stop", "-C", str(started), "-force"])
+    err = capsys.readouterr().err
+    assert code == EXIT_USAGE
+    assert "cannot signal the running eval (pid 4242)" in err
+    assert "stop --force relies on POSIX process groups" in err
+    assert "graceful stop request has still been written" in err
+    assert "interrupt the running agent yourself" in err
+    assert runstop.stop_requested(state.state_dir(started, "t1")) is True
+
+
+def test_force_on_posix_is_unaffected_when_no_eval_is_running(started, monkeypatch):
+    """The non-POSIX guard must not fire when there is nothing to signal —
+    that path already behaves identically to POSIX (nothing to break)."""
+    monkeypatch.setattr(cli_stop, "_POSIX", False)
+    monkeypatch.setattr(runstop, "eval_running", lambda d: (0, False))
+    assert cli_main.main(["stop", "-C", str(started), "-force"]) == 0

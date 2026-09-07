@@ -36,6 +36,11 @@ _REQUIRED_MODULES = _MEASURE_MODULES + _PROFILE_MODULES
 
 _MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
+# Computed once, same as runstop._POSIX and runner._POSIX: this is the one
+# thing that determines whether the concurrency guard, `stop --force`, and
+# the timeout's process-group kill actually work.
+_POSIX = os.name == "posix"
+
 
 class Severity(IntEnum):
     NOT_APPLICABLE = -1
@@ -111,6 +116,19 @@ def check_load() -> Finding:
 
 
 def check_platform() -> Finding:
+    if not _POSIX:
+        return Finding(
+            "platform",
+            "this platform is not POSIX; this harness has never been run or tested here, "
+            "and three of its guarantees are silently absent rather than merely degraded. "
+            "(1) The concurrency guard in claim_eval always reports success, so two evals "
+            "can run against the same pinned baseline worktree at once. (2) `stop --force` "
+            "cannot signal the running eval's process group here, so it cannot stop one. "
+            "(3) A benchmark that times out has only its direct child killed, not its "
+            "process group, so its grandchildren keep running and burn CPU, corrupting "
+            "every later measurement. Do not trust a number produced here.",
+            Severity.FAIL,
+        )
     if sys.platform == "darwin":
         return Finding(
             "platform",
