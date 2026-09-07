@@ -16,18 +16,18 @@ _LABELS = {
 }
 
 
-def _configured_python(directory: str) -> str:
-    """The interpreter a run would actually use, so pytest-benchmark is
-    checked against the one that will run the benchmarks — not against
-    whichever interpreter happens to be running the harness itself."""
+def _configured(directory: str) -> config.Config | None:
+    """The config a run would actually use, so checks run against the interpreter
+    and PYTHONPATH layout that will run the benchmarks — not against whichever
+    interpreter happens to be running the harness itself, or the bare defaults."""
     try:
         root = Path(gitx.root(directory))
     except gitx.GitError:
-        return ""
+        return None
     try:
-        return config.load(root / config.CONFIG_PATH).python
+        return config.load(root / config.CONFIG_PATH)
     except config.ConfigError:
-        return ""
+        return None
 
 
 def run(args: list[str]) -> int:
@@ -35,7 +35,8 @@ def run(args: list[str]) -> int:
     parser.add_argument("-C", dest="directory", default=".", help="repository root")
     opts = parser.parse_args(args)
 
-    findings = doctor.check(opts.directory, python=_configured_python(opts.directory))
+    cfg = _configured(opts.directory)
+    findings = doctor.check(opts.directory, python=(cfg.python if cfg else ""), cfg=cfg)
     width = max(len(f.name) for f in findings)
     for f in findings:
         print(f"{_LABELS[f.severity]}  {f.name.ljust(width)}  {f.detail}")

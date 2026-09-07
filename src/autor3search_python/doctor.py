@@ -9,6 +9,7 @@ None of this gates anything: doctor reports, the human decides.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from autor3search_python import discover, gitx
+from autor3search_python import config, discover, gitx, runner
 
 _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
 
@@ -32,6 +33,8 @@ _MEASURE_MODULES = ("pytest", "pytest_benchmark")
 _PROFILE_MODULES = ("autor3search_python",)
 
 _REQUIRED_MODULES = _MEASURE_MODULES + _PROFILE_MODULES
+
+_MISSING_MODULE_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
 
 class Severity(IntEnum):
@@ -256,9 +259,52 @@ def check_coverage_addopts(root: str | Path) -> Finding:
     )
 
 
-def check_compiled_extensions(root: str | Path) -> Finding:
-    """PYTHONPATH injection cannot build a compiled extension into the baseline worktree."""
-    root = Path(root)
+@dataclass(frozen=True)
+class _Target:
+    """One top-level importable name and the path it resolves to on disk."""
+
+    name: str
+    path: Path
+
+
+def _top_level_targets(anchor: Path) -> list[_Target]:
+    """Packages (a directory with `__init__.py`) and modules (`*.py`) directly under `anchor`."""
+    if not anchor.is_dir():
+        return []
+    out: list[_Target] = []
+    for child in sorted(anchor.iterdir()):
+        name = child.name
+        if name.startswith((".", "_")) or name in discover.SKIP_DIRS or name.endswith(".egg-info"):
+            continue
+        if child.is_dir():
+            if (child / "__init__.py").exists():
+                out.append(_Target(name, child))
+        elif child.suffix == ".py" and name != "setup.py" and not discover.is_test_file(name):
+            out.append(_Target(child.stem, child))
+    return out
+
+
+def _discover_targets(root: Path) -> list[_Target]:
+    """Top-level importable names under the repo root, and under `src/` for that layout.
+
+    Root is checked first because that is the resolution order `runner.bench_env`
+    puts on PYTHONPATH (root, then `src/`) — a name defined in both would
+    resolve to the root one, same as the actual import will.
+    """
+    targets = _top_level_targets(root)
+    targets += _top_level_targets(root / "src")
+    seen: set[str] = set()
+    out: list[_Target] = []
+    for t in targets:
+        if t.name in seen:
+            continue
+        seen.add(t.name)
+        out.append(t)
+    return out
+
+
+def _extension_signals(root: Path) -> list[str]:
+    """Proxies for "needs a build step" — an explanation for a failed import, not a verdict."""
     signals: list[str] = []
     for name in _EXTENSION_SIGNALS:
         if (root / name).exists():
@@ -271,18 +317,162 @@ def check_compiled_extensions(root: str | Path) -> Finding:
         pass
     if any(root.rglob("*.pyx")):
         signals.append("*.pyx sources")
-    if signals:
+    return signals
+
+
+def _ignored_for_missing_module(
+    root: Path, targets: Sequence[_Target], error_text: str
+) -> str | None:
+    """The path a `ModuleNotFoundError` in `error_text` names, if git would ignore it.
+
+    Works even when the path does not exist on disk here — exactly the case
+    for a fresh checkout, where the missing file was never committed. This is
+    `git check-ignore` rather than `git status`: check-ignore answers a pure
+    pattern question ("would this path be ignored?") with no dependency on
+    whether the path is actually present.
+
+    The anchor (repo root, or `src/`) is taken from the top-level target the
+    missing submodule belongs to, not guessed — both anchors can satisfy the
+    same trailing pattern (a bare `_version.py` in `.gitignore` matches at any
+    depth), so guessing would silently name the wrong tree's copy.
+    """
+    m = _MISSING_MODULE_RE.search(error_text)
+    if not m:
+        return None
+    parts = m.group(1).split(".")
+    anchor = next((t.path.parent for t in targets if t.name == parts[0]), None)
+    anchors = [anchor] if anchor is not None else [root, root / "src"]
+    for base_dir in anchors:
+        base = base_dir / "/".join(parts)
+        for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+            try:
+                rel = candidate.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            try:
+                proc = subprocess.run(
+                    ["git", "check-ignore", "-q", "--", rel],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return None
+            if proc.returncode == 0:
+                return rel
+    return None
+
+
+def _gitignored_within(root: Path, targets: Sequence[_Target]) -> list[str]:
+    """Gitignored paths that physically exist under `targets` right now.
+
+    These are present in this working tree only by accident of local state —
+    a generated file, typically — and will be absent from a fresh checkout,
+    including the pinned baseline worktree the harness measures against.
+    """
+    rel = [str(t.path.relative_to(root)) for t in targets if t.path.exists()]
+    if not rel:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--ignored", "--", *rel],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    out: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line.startswith("!! "):
+            continue
+        path = line[3:].strip()
+        parts = Path(path).parts
+        if "__pycache__" in parts or path.endswith((".pyc", ".pyo")):
+            continue
+        out.append(path)
+    return sorted(set(out))
+
+
+def check_imports(root: str | Path, python: str = "", cfg: config.Config | None = None) -> Finding:
+    """Actually try to import the repository, instead of guessing from proxy files.
+
+    This runs in a subprocess, under the same `runner.bench_env` and the same
+    interpreter the real measurement uses, because a heuristic like "no
+    Cargo.toml, so it must be pure Python and importable" can be — and was,
+    against a real repository — confidently wrong: a generated file absent
+    from a fresh checkout broke every import while every proxy still said OK.
+    """
+    root = Path(root)
+    cfg = cfg or config.default()
+    targets = _discover_targets(root)
+    if not targets:
         return Finding(
-            "extensions",
-            f"this repository looks like it needs a build step ({', '.join(signals)}). "
-            f"Measurement imports each tree straight off disk via PYTHONPATH and cannot "
-            f"build extensions, so the pinned baseline worktree may fail to import.",
+            "imports", "no top-level package or module found to import", Severity.NOT_APPLICABLE
+        )
+    names = [t.name for t in targets]
+    exe = python or sys.executable
+    env = runner.bench_env(root, cfg)
+    script = (
+        "import sys\n"
+        f"for _name in {names!r}:\n"
+        "    try:\n"
+        "        __import__(_name)\n"
+        "    except BaseException as e:\n"
+        "        print(f'{_name}: {type(e).__name__}: {e}', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+    )
+    try:
+        proc = subprocess.run(
+            [exe, "-c", script],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return Finding("imports", f"could not run {exe}: {e}", Severity.FAIL)
+
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"{exe} exited {proc.returncode} importing {names}"
+        signals = _extension_signals(root)
+        if signals:
+            detail += (
+                f" — this repository looks like it needs a build step "
+                f"({', '.join(signals)}); PYTHONPATH injection cannot build extensions, so "
+                f"this strategy cannot serve it."
+            )
+        ignored = _ignored_for_missing_module(root, targets, proc.stderr)
+        if ignored:
+            detail += (
+                f" {ignored} is gitignored — it will be missing from a fresh checkout, "
+                f"including the pinned baseline worktree. If it must exist, generate it and "
+                f"`git add -f {ignored}`."
+            )
+        return Finding("imports", detail, Severity.FAIL)
+
+    drifting = _gitignored_within(root, targets)
+    if drifting:
+        return Finding(
+            "imports",
+            f"{', '.join(names)} import cleanly here, but "
+            f"{', '.join(drifting)} {'is' if len(drifting) == 1 else 'are'} gitignored — "
+            f"present in this working tree but will be missing from the pinned baseline "
+            f"worktree, where the import will then fail. Fix with: "
+            f"git add -f {' '.join(drifting)}",
             Severity.WARN,
         )
-    return Finding("extensions", "pure Python; importable straight off disk", Severity.OK)
+    return Finding("imports", f"{', '.join(names)} import cleanly", Severity.OK)
 
 
-def check(directory: str | Path, python: str = "") -> list[Finding]:
+def check(
+    directory: str | Path, python: str = "", cfg: config.Config | None = None
+) -> list[Finding]:
     """Every diagnostic, in report order."""
     try:
         root = Path(gitx.root(directory))
@@ -297,6 +487,6 @@ def check(directory: str | Path, python: str = "") -> list[Finding]:
         check_platform(),
         check_benchmark_tooling(python),
         check_coverage_addopts(root),
-        check_compiled_extensions(root),
+        check_imports(root, python, cfg),
         check_disk(directory),
     ]

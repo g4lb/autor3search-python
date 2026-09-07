@@ -4,6 +4,7 @@ import pytest
 
 from autor3search_python import config, doctor
 from autor3search_python.cli import main as cli_main
+from tests.conftest import git
 
 _SYSTEM_PYTHON = "/usr/bin/python3"
 
@@ -40,7 +41,7 @@ def test_check_returns_findings_for_the_basics(git_repo):
         "cpu",
         "pytest-benchmark",
         "coverage",
-        "extensions",
+        "imports",
         "disk",
     } <= names
 
@@ -79,27 +80,122 @@ def test_no_coverage_is_ok(tmp_path):
     assert doctor.check_coverage_addopts(tmp_path).severity is doctor.Severity.OK
 
 
-def test_compiled_extension_signals_are_warned_about(tmp_path):
-    """PYTHONPATH injection cannot build these, so the baseline worktree will not import."""
-    (tmp_path / "setup.py").write_text("from setuptools import setup\nsetup(ext_modules=[])\n")
-    assert doctor.check_compiled_extensions(tmp_path).severity is doctor.Severity.WARN
-
-
-def test_cargo_and_pyx_and_meson_also_signal(tmp_path):
-    for name, body in (
-        ("Cargo.toml", "[package]\n"),
-        ("mod.pyx", "x = 1\n"),
-        ("meson.build", "project('x')\n"),
-    ):
-        d = tmp_path / name.replace(".", "_")
-        d.mkdir()
-        (d / name).write_text(body)
-        assert doctor.check_compiled_extensions(d).severity is doctor.Severity.WARN
-
-
-def test_a_plain_pure_python_repo_is_ok(tmp_path):
+def test_a_plain_pure_python_module_actually_imports_ok(tmp_path):
+    """The real check: attempt the import, don't guess from proxy files."""
     (tmp_path / "mod.py").write_text("x = 1\n")
-    assert doctor.check_compiled_extensions(tmp_path).severity is doctor.Severity.OK
+    f = doctor.check_imports(tmp_path)
+    assert f.severity is doctor.Severity.OK
+    assert "mod" in f.detail
+
+
+def test_a_src_layout_package_is_discovered_and_imports_ok(tmp_path):
+    pkg = tmp_path / "src" / "widget"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("x = 1\n")
+    f = doctor.check_imports(tmp_path)
+    assert f.severity is doctor.Severity.OK
+    assert "widget" in f.detail
+
+
+def test_no_top_level_package_or_module_is_not_applicable(tmp_path):
+    (tmp_path / "README.md").write_text("nothing to import\n")
+    assert doctor.check_imports(tmp_path).severity is doctor.Severity.NOT_APPLICABLE
+
+
+def test_a_broken_import_is_a_failure_carrying_the_real_error(tmp_path):
+    """No heuristic can substitute for actually trying: the message must carry
+    the interpreter's own error, not a guess about why it might fail."""
+    pkg = tmp_path / "broken"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("import this_module_does_not_exist_anywhere\n")
+    f = doctor.check_imports(tmp_path)
+    assert f.severity is doctor.Severity.FAIL
+    assert "ModuleNotFoundError" in f.detail
+    assert "this_module_does_not_exist_anywhere" in f.detail
+
+
+def test_extension_signals_explain_a_failure_but_are_not_a_verdict_alone(tmp_path):
+    """Demoted: a signal is an explanation attached to a real failure, not a
+    verdict of its own — the opposite of what the old proxy check did."""
+    (tmp_path / "Cargo.toml").write_text("[package]\n")
+    pkg = tmp_path / "broken"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("import this_module_does_not_exist_anywhere\n")
+    f = doctor.check_imports(tmp_path)
+    assert f.severity is doctor.Severity.FAIL
+    assert "ModuleNotFoundError" in f.detail
+    assert "Cargo.toml" in f.detail
+
+
+def test_extension_signals_alone_do_not_fail_or_warn_when_import_succeeds(tmp_path):
+    """The negative case for the above: a Cargo.toml sitting beside a package
+    that imports fine must not drag the verdict down to WARN or FAIL — the old
+    check did exactly that, on nothing more than the file's presence."""
+    (tmp_path / "Cargo.toml").write_text("[package]\n")
+    (tmp_path / "mod.py").write_text("x = 1\n")
+    f = doctor.check_imports(tmp_path)
+    assert f.severity is doctor.Severity.OK
+    assert "Cargo.toml" not in f.detail
+
+
+def _write_generated_version_package(repo: Path) -> None:
+    """A src/-layout package whose `__init__.py` needs a gitignored `_version.py`.
+
+    Mirrors humanize under hatch-vcs: `_version.py` is generated at build
+    time, gitignored, and does not exist in a fresh checkout.
+    """
+    (repo / ".gitignore").write_text("_version.py\n")
+    pkg = repo / "src" / "widget"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("from widget._version import __version__\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "add widget package")
+
+
+def test_missing_gitignored_version_file_fails_with_the_real_error_and_names_it(git_repo):
+    """Finding 1 + 2, exactly: a fresh checkout (no generated `_version.py`)
+    must FAIL — the old proxy check reported this repository OK — carrying
+    the real ModuleNotFoundError, and naming the gitignored file responsible
+    even though it does not exist here (`git check-ignore` needs no file on
+    disk, only a pattern to test against)."""
+    _write_generated_version_package(git_repo)
+
+    f = doctor.check_imports(git_repo)
+
+    assert f.severity is doctor.Severity.FAIL
+    assert "ModuleNotFoundError" in f.detail
+    assert "widget._version" in f.detail
+    assert "src/widget/_version.py" in f.detail
+    assert "git add -f src/widget/_version.py" in f.detail
+
+
+def test_present_but_gitignored_version_file_is_a_warning_not_an_ok(git_repo):
+    """The other half: when the generated file happens to exist locally the
+    import succeeds, but the pinned baseline worktree (a fresh checkout) will
+    not have it — this must not be silently OK."""
+    _write_generated_version_package(git_repo)
+    (git_repo / "src" / "widget" / "_version.py").write_text('__version__ = "0.0.0"\n')
+
+    f = doctor.check_imports(git_repo)
+
+    assert f.severity is doctor.Severity.WARN
+    assert "src/widget/_version.py" in f.detail
+    assert "git add -f src/widget/_version.py" in f.detail
+
+
+def test_a_tracked_version_file_is_a_clean_ok(git_repo):
+    """The positive control for the two tests above: once the generated file
+    is committed (not merely present), both the import and the gitignore scan
+    are clean — this must render OK, not linger at WARN forever."""
+    _write_generated_version_package(git_repo)
+    (git_repo / "src" / "widget" / "_version.py").write_text('__version__ = "0.0.0"\n')
+    git(git_repo, "add", "-f", "src/widget/_version.py")
+    git(git_repo, "commit", "-q", "-m", "track the generated version file")
+
+    f = doctor.check_imports(git_repo)
+
+    assert f.severity is doctor.Severity.OK
+    assert "_version.py" not in f.detail
 
 
 @pytest.mark.skipif(
