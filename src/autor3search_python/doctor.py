@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from autor3search_python import config, discover, gitx, runner
+from autor3search_python import config, discover, gitx, runner, state
 
 _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
 
@@ -150,6 +150,68 @@ def check_disk(directory: str | Path) -> Finding:
     if free_gb < 5.0:
         return Finding("disk", f"{free_gb:.1f} GB free", Severity.WARN)
     return Finding("disk", f"{free_gb:.1f} GB free", Severity.OK)
+
+
+def _nearest_existing_ancestor(path: Path) -> Path:
+    """`path` itself, or the closest ancestor that actually exists.
+
+    `state_home()`'s directory, and everything under it, is created lazily —
+    `baseline` is what first makes it exist. `os.stat` needs a real path, so
+    a filesystem comparison has to walk up to one.
+    """
+    probe = path
+    while not probe.exists():
+        parent = probe.parent
+        if parent == probe:  # reached the filesystem root without finding one
+            break
+        probe = parent
+    return probe
+
+
+def check_state_fs(directory: str | Path) -> Finding:
+    """The pinned baseline worktree lives under `state_home()`, out of the
+    repository on purpose (see state.py's module docstring) — deliberately
+    reachable by the agent only through the repository it edits, not
+    through the state directory itself. Nothing then checks the two share a
+    filesystem, though. Point AUTOR3SEARCH_PYTHON_STATE_HOME at a tmpfs or a
+    second volume and the two A/B sides of every comparison end up measured
+    on different storage — invisible in the reported numbers, and fatal for
+    a benchmark whose time is dominated by I/O rather than CPU.
+    """
+    try:
+        root = Path(gitx.root(directory))
+    except gitx.GitError:
+        root = Path(directory)
+    try:
+        home = state.state_home()
+    except state.StateError as e:
+        return Finding(
+            "state filesystem",
+            f"{e} — see the state finding a run command would report",
+            Severity.NOT_APPLICABLE,
+        )
+    home_probe = _nearest_existing_ancestor(home)
+    try:
+        root_dev = root.stat().st_dev
+        home_dev = home_probe.stat().st_dev
+    except OSError as e:
+        return Finding(
+            "state filesystem",
+            f"could not stat {root} or {home_probe}: {e}",
+            Severity.NOT_APPLICABLE,
+        )
+    if root_dev != home_dev:
+        return Finding(
+            "state filesystem",
+            f"{root} and the run-state directory ({home_probe}) are on different "
+            f"filesystems — the pinned baseline worktree lives under the latter, so an "
+            f"I/O-bound benchmark would measure its two sides against different storage "
+            f"without anything in the reported numbers saying so. Point "
+            f"AUTOR3SEARCH_PYTHON_STATE_HOME at a directory on the same filesystem as "
+            f"this repository",
+            Severity.WARN,
+        )
+    return Finding("state filesystem", f"{root} and {home_probe} share a filesystem", Severity.OK)
 
 
 def _describe(names: Sequence[str]) -> str:
@@ -489,4 +551,5 @@ def check(
         check_coverage_addopts(root),
         check_imports(root, python, cfg),
         check_disk(directory),
+        check_state_fs(directory),
     ]

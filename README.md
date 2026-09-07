@@ -390,6 +390,15 @@ Python-specific, new in this port:
   into `pyproject.toml`, `pytest.ini`, `setup.cfg` or `tox.ini` instruments
   every call in every measured round; `doctor` checks for it and warns. This
   is the single highest-value check it runs.
+- **The pinned baseline worktree can end up on different storage than the
+  repository.** It lives under `state_home()` (see
+  [Where run state lives](#where-run-state-lives)), which is out-of-tree on
+  purpose, but nothing else ties it to the repository's filesystem. Point
+  `AUTOR3SEARCH_PYTHON_STATE_HOME` at a tmpfs or a second volume and the two
+  A/B sides of every comparison are measured on different storage —
+  invisible in the reported numbers, and fatal for a benchmark whose time is
+  dominated by I/O rather than CPU. `doctor` compares `st_dev` for the
+  repository root and the run-state directory and warns when they differ.
 - **`stat = "min"` vs. `"median"` is a real trade-off, not a free knob.**
   `min` gives a tighter distribution and more statistical power to detect a
   real difference, but it reports a best case rather than a typical one, and
