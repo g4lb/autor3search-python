@@ -13,6 +13,7 @@ unattended loop tell "your change was refused" from "the tool is broken".
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from typing import IO
 from autor3search_python import (
     benchio,
     config,
+    containment,
     discover,
     freeze,
     gitx,
@@ -36,6 +38,54 @@ from autor3search_python import (
 )
 
 RUN_LOG_NAME = "run.log"
+RUN_LOG_BACKUP_NAME = RUN_LOG_NAME + ".1"
+
+# Every gate and bench round appends its own (already capped) stdout and
+# stderr — up to runner.CAP_BYTES each, roughly 22 subprocess calls per
+# experiment — so a single experiment's transcript can run into the
+# hundreds of MB, and with no cap a 100-experiment overnight loop can write
+# tens of GB into the user's working tree and fill the disk. Sized to the
+# same order of magnitude as one experiment's own transcript, so a run.log
+# past this point has already served its purpose as THIS experiment's
+# diagnostic and is fair to roll over.
+RUN_LOG_MAX_BYTES = 200 * 1024 * 1024
+
+
+def rotate_run_log(root: str | Path) -> None:
+    """Keep run.log from growing without bound across an overnight loop.
+
+    Rotated by size, one backup deep (run.log -> run.log.1), rather than
+    truncated in place: truncating the file about to be appended to would
+    still let it grow without bound from a smaller starting point, just
+    more slowly. One backup keeps roughly the last two experiments'
+    transcripts available — usually enough to see why the previous one
+    failed — while bounding total disk use to about 2x RUN_LOG_MAX_BYTES
+    regardless of how many experiments the loop runs.
+
+    Must be called before `run.log` is opened for this experiment, and
+    itself checks containment immediately before touching either path: it
+    is exactly as reachable as `run.log` itself to the symlink swap
+    `containment.ensure_contained` guards against elsewhere.
+    """
+    root = Path(root)
+    log_path = root / RUN_LOG_NAME
+    try:
+        size = log_path.stat().st_size
+    except OSError:
+        return  # missing, or unreadable for some other reason: nothing to rotate
+    if size < RUN_LOG_MAX_BYTES:
+        return
+    backup_path = root / RUN_LOG_BACKUP_NAME
+    try:
+        containment.ensure_contained(root, log_path, RUN_LOG_NAME, "rotate")
+        containment.ensure_contained(root, backup_path, RUN_LOG_BACKUP_NAME, "rotate")
+    except containment.ContainmentError:
+        return  # the open right after this call raises the same error, loudly
+    with contextlib.suppress(OSError):
+        backup_path.unlink()
+    with contextlib.suppress(OSError):
+        log_path.rename(backup_path)
+
 
 # Rejected regardless of scope. Changing a dependency is a supply-chain decision
 # a human makes, not something an unattended overnight loop decides — and a

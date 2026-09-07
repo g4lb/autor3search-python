@@ -339,6 +339,14 @@ Ported from the Go original:
 - One metric source. No `asv`-style backend, no analogue of `-race`.
 - No allocation column in `results.tsv` (see below) — the allocation story
   moved entirely to `profile`.
+- **`run.log` is bounded, not append-forever.** Every gate and bench round
+  appends its own (already per-stream-capped) stdout and stderr, so one
+  experiment's transcript can run into the hundreds of MB, and an unattended
+  overnight loop with no cap could write tens of GB into the working tree.
+  `eval` rotates `run.log` to `run.log.1` (one backup) once it passes
+  200 MB, bounding total disk use to roughly 2x that regardless of how many
+  experiments the loop runs. Copy `run.log` elsewhere first if you need more
+  than the current and previous experiment's transcript.
 - **The benchmark timer runs inside the process executing the candidate's
   code, and this is not fully closable.** `bench_env` puts the candidate
   tree on `PYTHONPATH` and pytest imports its modules directly into the

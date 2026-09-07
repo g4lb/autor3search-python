@@ -335,6 +335,12 @@ diagnostic transcript you need when a step FAILs or CRASHes and you want
 to see why. Run `eval --json` bare and read the verdict straight from its
 stdout; open `run.log` only to read it, never to write to it.
 
+`run.log` is bounded, not append-forever: once it passes 200 MB it is
+rotated to `run.log.1` (one backup) before the next experiment's transcript
+starts, so an overnight loop cannot fill the disk. If you need more than
+the current and previous experiment's transcript, copy `run.log` elsewhere
+before it rotates.
+
 LOOP FOREVER:
 
 0. Print one context line, so the human watching knows where the run is
