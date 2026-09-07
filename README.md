@@ -332,9 +332,18 @@ Python-specific, new in this port:
 - **The PYTHONPATH-injection import strategy cannot build compiled
   extensions.** Each tree is imported straight off disk with `PYTHONPATH` set
   to that tree's root (and `src/`, for a src-layout) — there is no install
-  step. A package with a `setup.py` declaring `ext_modules`, a `Cargo.toml`,
-  `*.pyx` sources, or a `meson.build` cannot be served this way; `doctor`
-  detects these signals and warns, but does not refuse to run.
+  step. `doctor` checks this for real: it discovers the repository's
+  top-level packages and modules and actually imports each one in a
+  subprocess, under the same environment and interpreter a run would use, and
+  reports FAIL with the real error when one does not import — a package with
+  a `setup.py` declaring `ext_modules`, a `Cargo.toml`, `*.pyx` sources, or a
+  `meson.build` cannot be served this way, and when a failure coincides with
+  one of those signals `doctor` names it as the likely reason. It also checks
+  for gitignored files inside the packages it imports — a generated file
+  (`_version.py` from setuptools-scm or hatch-vcs, say) that exists locally
+  but was never committed will be missing from the pinned baseline worktree,
+  and `doctor` names it and suggests `git add -f`. None of this refuses to
+  run; it reports.
 - **Coverage in `addopts` silently destroys every timing.** A `--cov` baked
   into `pyproject.toml`, `pytest.ini`, `setup.cfg` or `tox.ini` instruments
   every call in every measured round; `doctor` checks for it and warns. This
