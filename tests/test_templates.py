@@ -71,3 +71,16 @@ def test_program_md_forbids_every_file_the_scope_gate_rejects_outright():
         pipeline.DEPENDENCY_FILES | pipeline.MEASUREMENT_CONFIG_FILES | pipeline.STARTUP_HOOK_STEMS
     ):
         assert name in text, f"{name} is rejected outright but program.md never says so"
+
+
+def test_program_md_names_every_reason_code():
+    """Derived from the enum, not retyped: adding a Reason must fail here until
+    program.md names it too. `reason` is presented to the agent as an
+    exhaustive list, so a code it can receive but cannot find there is one it
+    can only interpret by guessing.
+    """
+    text = templates.program_md()
+    for reason in verdict.Reason:
+        assert f"`{reason.value}`" in text, (
+            f"{reason.value} can appear in --json output but program.md never names it"
+        )
