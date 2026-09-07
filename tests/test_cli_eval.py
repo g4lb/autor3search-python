@@ -210,3 +210,69 @@ def test_best_bench_delta_picks_the_largest_improvement():
         -30.0
     )
     assert cli_eval.best_bench_delta([]) == 0.0
+
+
+def test_pick_unit_renders_sub_microsecond_values_as_nonzero():
+    """The bug: every one of 15 sub-microsecond humanize benchmarks printed as
+    "0.000ms 0.000ms" — the unit hid every digit that mattered."""
+    values = [2.3e-7, 5.1e-7, 1.9e-7]  # 190ns-510ns
+    unit, per_unit = cli_eval.pick_unit(values)
+    rendered = [f"{v / per_unit:.3f}{unit}" for v in values]
+    assert all(r != f"0.000{unit}" for r in rendered)
+    assert unit == "ns"
+
+
+def test_pick_unit_uses_one_unit_for_the_whole_table():
+    """Chosen once for the column, not per row: a table mixing "3.20ms" and
+    "1.10µs" down one column is unreadable in a different way than an
+    all-zero one."""
+    # A wide spread of magnitudes in the same table.
+    values = [1e-9, 5e-6, 2e-3, 4.0]
+    unit, per_unit = cli_eval.pick_unit(values)
+    # Every value gets scaled by the very same (unit, per_unit) pair.
+    assert all(isinstance(v / per_unit, float) for v in values)
+    # And it is a single, real choice from the table, not a per-row guess.
+    assert unit in {"s", "ms", "µs", "ns"}
+
+
+def test_pick_unit_picks_seconds_for_second_scale_values():
+    unit, _ = cli_eval.pick_unit([1.2, 1.3, 0.9])
+    assert unit == "s"
+
+
+def test_pick_unit_picks_milliseconds_for_millisecond_scale_values():
+    unit, _ = cli_eval.pick_unit([0.012, 0.015])
+    assert unit == "ms"
+
+
+def test_pick_unit_picks_microseconds_for_microsecond_scale_values():
+    unit, _ = cli_eval.pick_unit([12e-6, 15e-6])
+    assert unit == "µs"
+
+
+def test_pick_unit_falls_back_sanely_for_an_empty_or_all_zero_table():
+    assert cli_eval.pick_unit([])[0] == "ms"
+    assert cli_eval.pick_unit([0.0, 0.0])[0] == "ms"
+
+
+def test_human_output_does_not_render_sub_microsecond_benchmarks_as_all_zero(
+    run_ready, monkeypatch, capsys
+):
+    """End-to-end guard for the same bug: the printed table itself must not
+    collapse every sub-microsecond row to the same all-zero string."""
+    tiny = benchio.Delta(
+        name="tests/test_mod.py::test_w",
+        base_center=2.3e-7,
+        cand_center=1.9e-7,
+        ratio=0.826,
+        pct_change=-17.4,
+        p=0.0002,
+        alpha=0.05,
+        significant=True,
+        n_base=10,
+        n_cand=10,
+    )
+    monkeypatch.setattr(pipeline, "evaluate", stub(keep(), deltas=[tiny]))
+    cli_main.main(["eval", "-C", str(run_ready), "-desc", "x"])
+    out = capsys.readouterr().out
+    assert "0.000ms" not in out
