@@ -299,27 +299,121 @@ def test_editing_a_startup_hook_that_was_there_at_baseline_is_still_rejected(run
     assert "sitecustomize.pyc" in result.message
 
 
-def test_a_gitignored_forbidden_file_is_still_rejected(run, monkeypatch):
-    """.gitignore is an ordinary in-scope root file, and every other gate here
-    reads a git diff that honours it.
+def test_a_gitignored_forbidden_file_is_still_rejected(run, monkeypatch, tmp_path):
+    """.gitignore decides what every other gate here can see, because they all
+    read a git diff that honours it.
 
-    One committed line makes an untracked pytest.ini invisible to
-    changed_since — which passes --exclude-standard — while pytest goes on
-    reading it. The working tree, not the diff, is the source of truth for
-    "is this file here".
+    One line makes an untracked pytest.ini invisible to changed_since — which
+    passes --exclude-standard — while pytest goes on reading it. The working
+    tree, not the diff, is the source of truth for "is this file here".
+
+    The .gitignore is part of the BASELINE commit here, so this test exercises
+    the stat-based check alone: with the ignore line predating the run, the
+    diff loop has nothing to say about it and only the working-tree stat stands
+    between the run and a swapped benchmark timer.
     """
-    repo, _, _ = run
+    repo, sd, base = run
     (repo / ".gitignore").write_text("pytest.ini\n")
-    commit_all(repo, "ignore it")
+    head = commit_all(repo, "a repo that ignores pytest.ini")
+    base.commit = base.measure_commit = head
+    gitx.checkout_detached(sd / state.WORKTREE_NAME, head)
     (repo / "pytest.ini").write_text("[pytest]\naddopts = --benchmark-timer=faketimer.t\n")
 
-    assert "pytest.ini" not in gitx.changed_since(repo, git(repo, "rev-parse", "HEAD"))
+    assert "pytest.ini" not in gitx.changed_since(repo, head)
 
     result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
     assert result.status is verdict.Status.FAIL
     assert result.reason is verdict.Reason.SCOPE
     assert "pytest.ini" in result.message
     assert m is None
+
+
+def test_editing_gitignore_is_rejected(run, monkeypatch):
+    """The agent editing .gitignore is editing what every git-based gate sees.
+
+    A modification to a tracked file always shows up in the diff, so the only
+    thing an ignore line can hide is a NEW untracked file — an out-of-scope
+    module the scope gate never hears about and the interpreter imports
+    happily. Refuse the edit rather than reason about what it hid.
+    """
+    repo, _, _ = run
+    (repo / ".gitignore").write_text("secret_helpers/\n")
+    commit_all(repo, "widen what git cannot see")
+    result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert ".gitignore" in result.message
+    assert m is None
+
+
+def test_an_added_gitignore_is_rejected_even_when_it_hides_itself(run, monkeypatch):
+    """`.gitignore` listing itself is untracked, so no diff mentions it. The
+    stat-based check does not consult git at all."""
+    repo, _, _ = run
+    (repo / ".gitignore").write_text(".gitignore\n")
+    result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert ".gitignore" in result.message
+    assert m is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(pipeline.DEPENDENCY_FILES | frozenset(discover.PYTEST_CONFIG_FILES)),
+)
+def test_every_forbidden_name_is_also_checked_by_statting_the_tree(name):
+    """FORBIDDEN_ROOT_FILES must be a UNION, never a difference.
+
+    It drives the one check that does not read a git diff, so a name missing
+    from it is a name covered ONLY by the path --exclude-standard makes blind.
+    Subtracting DEPENDENCY_FILES from it to pick a nicer message left
+    pyproject.toml and setup.cfg in exactly that position.
+    """
+    assert name in pipeline.FORBIDDEN_ROOT_FILES
+
+
+def test_a_gitignored_untracked_pyproject_toml_cannot_swap_the_benchmark_timer(run, monkeypatch):
+    """The demonstrated attack, end to end, exactly as it was reproduced.
+
+    Commit a .gitignore naming pyproject.toml (as part of the baseline, so the
+    .gitignore gate is not what catches this), commit an in-scope fakeclock.py,
+    drop an UNTRACKED pyproject.toml carrying
+    `[tool.pytest.ini_options] addopts = "--benchmark-timer=fakeclock.t"`, then
+    make a comment-only edit to a source file. Every git-based gate is blind to
+    the pyproject.toml and pytest reads it anyway: this returned
+    `KEEP, score 0.0968 (-90.32%)` — a 90% "improvement" from a comment.
+    """
+    repo, sd, base = run
+    (repo / ".gitignore").write_text("pyproject.toml\n")
+    (repo / "fakeclock.py").write_text(
+        "import time\n\n\ndef t():\n    return time.perf_counter()/10\n"
+    )
+    head = commit_all(repo, "a clock, and an ignore line")
+    base.commit = base.measure_commit = head
+    gitx.checkout_detached(sd / state.WORKTREE_NAME, head)
+
+    (repo / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\naddopts = "--benchmark-timer=fakeclock.t"\n'
+    )
+    source = repo / "pkg" / "mod.py"
+    source.write_text("# a comment, and nothing else changes\n" + source.read_text())
+    commit_all(repo, "a comment")
+
+    assert "pyproject.toml" not in gitx.changed_since(repo, head)
+
+    called = []
+
+    def measure_fn(opts):
+        called.append(opts)
+        return fake_measure(10.0, 1.0, n=8)(opts)
+
+    result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch, measure_fn=measure_fn)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "pyproject.toml" in result.message
+    assert m is None
+    assert called == [], "the gate must fire before the measurement, not after it"
 
 
 def test_a_forbidden_file_present_at_baseline_does_not_fail_every_experiment(run, monkeypatch):

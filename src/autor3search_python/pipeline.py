@@ -69,7 +69,23 @@ DEPENDENCY_GLOBS = ("requirements*.txt", "constraints*.txt")
 # message. The remainder is derived, never re-listed: the whole point of the
 # shared constant is that adding a name pytest reads closes this gate too, with
 # no second edit to remember.
+#
+# This subtraction selects a MESSAGE and nothing else. It must never be the
+# input to a security check: FORBIDDEN_ROOT_FILES below is a union for exactly
+# that reason. It was the difference once, and pyproject.toml and setup.cfg
+# were then checked only through the git diff — which --exclude-standard makes
+# blind to a gitignored file — so an untracked pyproject.toml carrying
+# `[tool.pytest.ini_options] addopts = "--benchmark-timer=..."` produced a
+# fraudulent KEEP at -90%.
 MEASUREMENT_CONFIG_FILES = frozenset(discover.PYTEST_CONFIG_FILES) - DEPENDENCY_FILES
+
+# Rejected regardless of scope, and the reason is git itself. Every other gate
+# here reads `gitx.changed_since`, which passes --exclude-standard; .gitignore
+# decides what that command can see. An agent editing it is editing the
+# visibility of every git-based check at once, so the file is refused rather
+# than trusted — a new untracked module hidden behind one committed line is
+# invisible to the scope gate and perfectly importable.
+GITIGNORE_FILES = frozenset({".gitignore"})
 
 # Rejected regardless of scope, and the reason is startup, not pytest.
 # runner.bench_env puts the tree root on PYTHONPATH — it has to, or both sides
@@ -101,7 +117,21 @@ STARTUP_HOOK_FILES = frozenset(
 # interpreter still reads it. .gitignore is itself an in-scope root file, so
 # that is one commit away. Statting the worktree is the only source of truth
 # that a gitignore entry cannot rewrite.
-FORBIDDEN_ROOT_FILES = MEASUREMENT_CONFIG_FILES | STARTUP_HOOK_FILES
+#
+# A UNION of every forbidden name, never a difference. This is the check that
+# exists precisely because the diff-based ones are blind, so subtracting
+# anything from it re-opens the hole it was written to close: when it was
+# `MEASUREMENT_CONFIG_FILES | STARTUP_HOOK_FILES`, the two names the message
+# split removed — pyproject.toml and setup.cfg — were covered by the blind path
+# alone, and an untracked, gitignored pyproject.toml with a
+# `--benchmark-timer=` addopts line scored a KEEP at -90%. Whatever a name is
+# forbidden FOR, it belongs here as well.
+FORBIDDEN_ROOT_FILES = (
+    frozenset(discover.PYTEST_CONFIG_FILES)
+    | STARTUP_HOOK_FILES
+    | DEPENDENCY_FILES
+    | GITIGNORE_FILES
+)
 
 
 def is_dependency_file(rel: str) -> bool:
@@ -127,6 +157,13 @@ def is_startup_hook_file(rel: str) -> bool:
     """
     p = PurePosixPath(rel)
     return "/" not in rel and p.stem in STARTUP_HOOK_STEMS and p.suffix in _IMPORTABLE_SUFFIXES
+
+
+def is_gitignore_file(rel: str) -> bool:
+    """Only at the repository root: that is the one git consults for the whole
+    tree from `changed_since`'s point of view, and a nested one can only narrow
+    what is already inside an in-scope directory."""
+    return "/" not in rel and rel in GITIGNORE_FILES
 
 
 def is_bytecode(rel: str) -> bool:
@@ -252,6 +289,18 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
                     f"{rel} may not be modified: Python imports it automatically at "
                     f"interpreter startup, so it runs arbitrary code inside every gate and "
                     f"every measured process before any of them begin",
+                ),
+                None,
+            )
+        if is_gitignore_file(rel):
+            return (
+                verdict.gate(
+                    verdict.Status.FAIL,
+                    verdict.Reason.SCOPE,
+                    f"{rel} may not be modified: it decides what every git-based gate here "
+                    f"can see. changed_since passes --exclude-standard, so one line added "
+                    f"here hides a new untracked file from the scope gate while the "
+                    f"interpreter goes on importing it",
                 ),
                 None,
             )
