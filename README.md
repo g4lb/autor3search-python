@@ -365,20 +365,37 @@ Python-specific, new in this port:
   freed allocations to a source line at all — that needs a native allocator
   hook (e.g. `memray`), which this project does not take a dependency on. So
   it reports what `tracemalloc` actually can:
-  - **Peak additional traced memory per benchmark.** Before each test,
-    `tracemalloc.reset_peak()` is called; afterward,
-    `tracemalloc.get_traced_memory()` reports the high-water mark reached
-    during that test above its starting level. This is the only one of the
-    two that sees a *transient* allocation's volume — a benchmark that
-    allocates and frees a large structure on every round shows up here even
-    though nothing about it survives to be snapshotted later. It is
-    **process-wide, not filtered to the target repository**, because
-    `tracemalloc.get_traced_memory()` has no such filter: the number
-    includes pytest's and pytest-benchmark's own bookkeeping for that test,
-    not only the benchmark's own allocations. Resetting the peak
-    immediately before the call keeps that overhead scoped to one test
-    rather than accumulating across the whole session, but it does not
-    remove it.
+  - **Steady-state peak traced memory per benchmark.** The memory pass runs
+    with `-p no:benchmark`, disabling pytest-benchmark entirely, and the
+    harness supplies its own minimal `benchmark` fixture instead — one that
+    calls the benchmarked callable directly, a handful of times, bracketing
+    each call with `tracemalloc.reset_peak()` / `get_traced_memory()`, and
+    keeps the MINIMUM peak across those calls. Two things depend on that
+    design, not just on tracemalloc:
+    - **Why not pytest-benchmark's own timing loop.** It picks its round
+      count from a time budget, so a fast, cheap callable runs far more
+      rounds than a slow one within the same budget — and pytest-benchmark's
+      own per-round bookkeeping, proportional to round count rather than to
+      what the callable allocates, would then dominate the peak. A benchmark
+      that allocates nothing could rank ABOVE one that allocates megabytes,
+      purely because it ran more rounds. Calling the callable directly a
+      fixed number of times sidesteps this: every benchmark runs under equal
+      conditions regardless of its own speed.
+    - **Why the minimum, not the first call or the mean.** A one-time cost —
+      a lazy import on the first call, say — would otherwise inflate
+      whatever combines it with the repeated case. The minimum reports the
+      steady state instead, the same regime pytest-benchmark's own warmup
+      targets for timing, so both halves of the profile describe the same
+      thing.
+
+    This is the only one of the two measurements that sees a *transient*
+    allocation's volume — a benchmark that allocates and frees a large
+    structure every call shows up here even though nothing about it
+    survives to be snapshotted later. It is still **process-wide, not
+    filtered to the target repository**, because `get_traced_memory()` has
+    no such filter — so it is not literally "bytes this function
+    allocated" — but it is no longer inflated by pytest-benchmark's own
+    round-count bookkeeping.
   - **Retained sites, by source line, from a session-end snapshot.** This is
     `tracemalloc`'s own snapshot, filtered to the target repository, and it
     reports blocks still live when the session ended — result objects,
@@ -388,9 +405,9 @@ Python-specific, new in this port:
     reporting on a question it cannot otherwise answer. The peak figure
     above is what covers that case instead.
 
-  Neither figure is "bytes this function allocated": the peak is a
-  process-wide high-water mark that includes test-harness overhead, and the
-  retained sites are a snapshot of what survives, not a running total of
+  Neither figure is per-line allocation churn: the peak is a single
+  process-wide number per benchmark, not attributed to a source line, and
+  the retained sites are a snapshot of what survives, not a running total of
   everything ever allocated.
 
 ### Repos with no benchmarks

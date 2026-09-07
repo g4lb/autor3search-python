@@ -104,13 +104,13 @@ def test_a_transient_benchmark_reports_a_real_peak_and_labels_what_it_measured(t
     doc = json.loads(report.mem_path.read_text(encoding="utf-8"))
     peaks = doc["test_peaks"]
     assert set(peaks) == {"tests/test_mod.py::test_w"}
-    # 500 short strings is at least a few tens of KB once pytest-benchmark's
-    # own per-round bookkeeping is added in; a broken (or reverted) plugin
-    # reports 0 here, because nothing about this benchmark survives to the
-    # session-end snapshot the old code relied on exclusively.
-    assert peaks["tests/test_mod.py::test_w"] > 10_000
+    # 500 short strings plus the list holding them is at least a few KB; a
+    # broken (or reverted) plugin reports 0 here, because nothing about this
+    # benchmark survives to the session-end snapshot the old code relied on
+    # exclusively.
+    assert peaks["tests/test_mod.py::test_w"] > 1_000
 
-    assert "peak additional traced memory during each benchmark" in report.mem_top
+    assert "peak traced memory for one call of each benchmark, steady state" in report.mem_top
     assert "tests/test_mod.py::test_w" in report.mem_top
     assert "not filtered to this repository" in report.mem_top
     assert "still allocated when the session ended" in report.mem_top
@@ -175,6 +175,101 @@ def test_per_benchmark_peaks_are_keyed_by_node_id_for_every_benchmark(mixed_allo
     assert "mod.py" in report.mem_top
     for node_id in node_ids:
         assert node_id in report.mem_top
+
+
+@pytest.fixture
+def cheap_expensive_repo(git_repo):
+    """A benchmark that allocates ~nothing next to one that allocates a lot.
+
+    pytest-benchmark's own timing loop picks its round count from a time
+    budget, so within the same budget it runs vastly more rounds of `cheap`
+    (fast) than of `expensive` (slow, because it allocates 20,000 objects
+    per call). If the memory pass measured peak traced memory across that
+    whole timing loop, pytest-benchmark's own per-round bookkeeping —
+    proportional to round count, not to what the benchmark itself
+    allocates — would dominate, and `cheap` would rank ABOVE `expensive`.
+    """
+    (git_repo / "pkg").mkdir()
+    (git_repo / "pkg" / "__init__.py").write_text("")
+    (git_repo / "pkg" / "mod.py").write_text(
+        "def cheap():\n    return 1 + 1\n\n\n"
+        "def expensive():\n    return len([str(i) for i in range(20_000)])\n"
+    )
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_mod.py").write_text(
+        "from pkg.mod import cheap, expensive\n\n\n"
+        "def test_cheap(benchmark):\n"
+        "    benchmark(cheap)\n\n\n"
+        "def test_expensive(benchmark):\n"
+        "    benchmark(expensive)\n"
+    )
+    cli_main.main(["init", "-C", str(git_repo)])
+    git(git_repo, "add", "-A")
+    git(git_repo, "commit", "-q", "-m", "init")
+    return git_repo
+
+
+@pytest.mark.slow
+def test_cheap_benchmark_ranks_below_expensive_despite_more_potential_rounds(
+    cheap_expensive_repo,
+):
+    """Regression for the round-count artifact: `cheap` allocates nothing at
+    all, `expensive` allocates a real 20,000-item list, and the ranking must
+    reflect that — not how many rounds pytest-benchmark's timing loop would
+    have run each of them in a fixed time budget.
+    """
+    cfg = config.load(cheap_expensive_repo / config.CONFIG_PATH)
+    node_ids = ["tests/test_mod.py::test_cheap", "tests/test_mod.py::test_expensive"]
+    report = profile.run_profile(cheap_expensive_repo, node_ids, cfg)
+
+    doc = json.loads(report.mem_path.read_text(encoding="utf-8"))
+    peaks = doc["test_peaks"]
+    cheap_peak = peaks["tests/test_mod.py::test_cheap"]
+    expensive_peak = peaks["tests/test_mod.py::test_expensive"]
+    # `cheap` allocates nothing — its peak must be at or indistinguishable
+    # from zero, not inflated by round-count bookkeeping.
+    assert cheap_peak < 2_000
+    assert cheap_peak < expensive_peak
+    assert expensive_peak > 100_000
+
+
+@pytest.fixture
+def lazy_import_repo(git_repo):
+    """A benchmark whose first call pays a one-time import cost.
+
+    `pkg/heavy.py` allocates a real 20,000-item list at import time.
+    `lazy_once` imports it lazily, so only the FIRST of several measured
+    calls pays that cost — every later call just hits `sys.modules`. The
+    steady-state figure (the minimum across calls) must reflect the cheap,
+    repeated case, not the one-time setup cost.
+    """
+    (git_repo / "pkg").mkdir()
+    (git_repo / "pkg" / "__init__.py").write_text("")
+    (git_repo / "pkg" / "heavy.py").write_text("DATA = [str(i) for i in range(20_000)]\n")
+    (git_repo / "pkg" / "mod.py").write_text(
+        "def lazy_once():\n    from pkg import heavy\n\n    return len(heavy.DATA)\n"
+    )
+    (git_repo / "tests").mkdir()
+    (git_repo / "tests" / "test_mod.py").write_text(
+        "from pkg.mod import lazy_once\n\n\ndef test_lazy(benchmark):\n    benchmark(lazy_once)\n"
+    )
+    cli_main.main(["init", "-C", str(git_repo)])
+    git(git_repo, "add", "-A")
+    git(git_repo, "commit", "-q", "-m", "init")
+    return git_repo
+
+
+@pytest.mark.slow
+def test_one_time_import_cost_does_not_inflate_the_steady_state_peak(lazy_import_repo):
+    cfg = config.load(lazy_import_repo / config.CONFIG_PATH)
+    report = profile.run_profile(lazy_import_repo, ["tests/test_mod.py::test_lazy"], cfg)
+
+    doc = json.loads(report.mem_path.read_text(encoding="utf-8"))
+    peak = doc["test_peaks"]["tests/test_mod.py::test_lazy"]
+    # `pkg.heavy`'s ~20,000-string module body is well over 1MB; a broken
+    # implementation that used the first call, the mean, or the max instead
+    # of the minimum would report something on that order here instead.
+    assert peak < 5_000
 
 
 @pytest.mark.slow
@@ -310,7 +405,7 @@ def test_format_mem_distinguishes_peak_from_retained_labels(tmp_path):
         )
     )
     text = profile.format_mem(path)
-    assert "peak additional traced memory during each benchmark" in text
+    assert "peak traced memory for one call of each benchmark, steady state" in text
     assert "not filtered to this repository" in text
     assert "blocks still allocated when the session ended" in text
     assert "retained memory, not total bytes allocated" in text

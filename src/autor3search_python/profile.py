@@ -101,17 +101,26 @@ def _format_size(num_bytes: int) -> str:
 
 
 def _format_test_peaks(test_peaks: dict, limit: int) -> str:
-    """Render the per-benchmark peak-additional-traced-memory table.
+    """Render the per-benchmark steady-state peak-memory table.
 
     This is the measurement that a session-end snapshot alone cannot give:
     it sees allocation volume during a benchmark even when every byte of it
-    is freed before the run ends (see format_mem's module-level context and
-    profiling.pytest_runtest_call for why it is process-wide, not filtered
-    to the repository, and therefore not "bytes this function allocated").
+    is freed before the run ends. It is the minimum peak additional traced
+    memory over a handful of direct calls to the benchmarked callable (see
+    `profiling._MemBenchmarkFixture`/`_measure_peak`) — steady state, so a
+    one-time cost like a lazy import on the first call is excluded, and
+    measured by calling the callable directly rather than through
+    pytest-benchmark's own timing loop, whose round count would otherwise
+    swamp the number for anything fast and cheap. Still process-wide in the
+    sense that `tracemalloc.get_traced_memory()` is never filtered to the
+    repository the way the retained-sites snapshot below is — so it is not
+    literally "bytes this one function allocated" — but no longer inflated
+    by pytest-benchmark's own round-count bookkeeping.
     """
     header = (
-        "peak additional traced memory during each benchmark (process-wide, not "
-        "filtered to this repository — includes pytest's own overhead):"
+        "peak traced memory for one call of each benchmark, steady state (the "
+        "minimum peak over several direct calls, excluding one-time setup cost; "
+        "process-wide — get_traced_memory is not filtered to this repository):"
     )
     if not test_peaks:
         return f"{header}\n(no per-benchmark peaks recorded — no benchmarks ran)"
@@ -181,7 +190,25 @@ def run_profile(
     mem_path.unlink(missing_ok=True)
 
     base_env = runner.bench_env(root, cfg)
-    for env_var, target in ((profiling.CPU_ENV, cpu_path), (profiling.MEM_ENV, mem_path)):
+    # The CPU pass keeps using pytest-benchmark's own timing loop — cProfile
+    # doesn't care how many rounds run. The memory pass explicitly disables
+    # that plugin ("-p no:benchmark") and supplies its own `benchmark`
+    # fixture instead (see profiling._MemBenchmarkFixture): pytest-benchmark
+    # picks its round count from a time budget, so it runs far more rounds
+    # for a fast, cheap callable than for a slow one — and that round-count
+    # difference, not the callable's own allocations, would dominate
+    # tracemalloc's peak. `--benchmark-*` flags are meaningless (and
+    # unrecognised) once that plugin is disabled, so the memory pass gets
+    # none of them; node_ids alone already select exactly the tests to run.
+    passes = (
+        (
+            profiling.CPU_ENV,
+            cpu_path,
+            ("--benchmark-only", "--benchmark-max-time=0.5", "--benchmark-min-rounds=1"),
+        ),
+        (profiling.MEM_ENV, mem_path, ("-p", "no:benchmark")),
+    )
+    for env_var, target, extra_args in passes:
         env = dict(base_env)
         # Strip BOTH variables first. Without this, a leftover value for the
         # OTHER pass's variable — inherited from the parent shell, or from a
@@ -203,9 +230,7 @@ def run_profile(
             "-p",
             "autor3search_python.profiling",
             "--import-mode=importlib",
-            "--benchmark-only",
-            "--benchmark-max-time=0.5",
-            "--benchmark-min-rounds=1",
+            *extra_args,
             *node_ids,
         )
         if res.timed_out:
