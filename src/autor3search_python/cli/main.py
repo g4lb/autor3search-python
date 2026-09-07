@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from collections.abc import Callable
 
 EXIT_OK = 0
@@ -56,7 +57,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"autor3search-python: unknown command {cmd!r}", file=sys.stderr)
         usage(sys.stderr)
         return EXIT_USAGE
-    return _load(cmd)(rest)
+    try:
+        return _load(cmd)(rest)
+    except Exception:
+        # The last line of defence, and it exists for one number: an uncaught
+        # exception leaves Python exiting 1, which is DISCARD in this tool's
+        # vocabulary. An unattended overnight loop would read "your change was
+        # merely unimpressive", `git reset --hard HEAD~1`, and keep going
+        # against a harness that can no longer decide anything — forever, and
+        # confidently. Exit 3 instead: CRASH is the branch that means "the tool
+        # is broken", and the agent stops rather than discarding good work.
+        #
+        # Deliberately broad, and deliberately not a list of exception types:
+        # eval already names the nine it expects, and this catches the ones
+        # nobody predicted — a TypeError from a refactor, a RecursionError, a
+        # MemoryError. KeyboardInterrupt and SystemExit are BaseException and
+        # still pass through, so Ctrl+C keeps eval's own ABORTED handling.
+        traceback.print_exc(file=sys.stderr)
+        print(
+            f"autor3search-python: the {cmd!r} command crashed — this is a harness "
+            f"malfunction, not a verdict on your change",
+            file=sys.stderr,
+        )
+        return EXIT_CRASH
 
 
 if __name__ == "__main__":

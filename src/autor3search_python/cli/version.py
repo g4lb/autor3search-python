@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from autor3search_python import __version__
+from autor3search_python.cli.main import EXIT_OK
 
 
 def _git(repo: Path, *args: str) -> str | None:
@@ -39,4 +40,4 @@ def run(args: list[str]) -> int:
         print(f"autor3search-python {__version__} (checkout {checkout})")
     else:
         print(f"autor3search-python {__version__}")
-    return 0
+    return EXIT_OK
