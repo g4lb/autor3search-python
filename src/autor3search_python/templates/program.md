@@ -83,7 +83,16 @@ exactly these:
 | `0` | KEEP  — the change is a real, safe improvement | `KEEP` |
 | `1` | DISCARD — no significant improvement, or it lost the coin flip against noise | `DISCARD` |
 | `2` | FAIL — a gate rejected the change: scope violation, a new/edited test file, an import failure, or a test failure | `FAIL` |
-| `3` | CRASH — the code failed to compile, a phase timed out, or the measurement itself crashed | `CRASH` |
+| `3` | CRASH — the code failed to compile, a phase timed out, the measurement itself crashed, or the harness malfunctioned | `CRASH` |
+
+A CRASH is never a judgement on your change, and one particular CRASH is not
+even about your code: if `eval` prints a Python traceback on stderr and says
+the command crashed, the harness itself broke. There will be no `--json`
+object and no `results.tsv` row for that experiment. Reset the commit as you
+would for any non-KEEP, and say plainly in the next experiment's `-desc` that
+the harness crashed — do not start rewriting your change to appease it, and
+do not read exit `3` as "not fast enough". That is exit `1`, and it means
+something completely different.
 
 Any status the harness cannot classify is reported as exit code `2`
 (FAIL) rather than a silent success — treat an unrecognized `--json` status
