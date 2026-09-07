@@ -155,6 +155,32 @@ def test_run_log_is_appended_not_truncated(run_ready, monkeypatch):
     assert (run_ready / pipeline.RUN_LOG_NAME).read_text().count("round") == 2
 
 
+def test_a_symlinked_run_log_is_refused_and_the_outside_file_is_untouched(
+    run_ready, monkeypatch, capsys, tmp_path
+):
+    """Demonstrated attack: `ln -s /tmp/victim.txt run.log` then `eval` appended
+    the harness's own transcript through the link — 31.5 KB into a file outside
+    the repository that started at 39 bytes. run.log's name is deliberately
+    waved through the scope gate (it is the harness's own output) and it is
+    gitignored, so nothing else stops the swap."""
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"untouched")
+    log_path = run_ready / pipeline.RUN_LOG_NAME
+    log_path.symlink_to(victim)
+
+    def noisy(opts):
+        opts.log.write("a very long build transcript\n" * 1000)
+        return keep(), pipeline.Measurements(time=[delta()])
+
+    monkeypatch.setattr(pipeline, "evaluate", noisy)
+    code = cli_main.main(["eval", "-C", str(run_ready), "-desc", "x"])
+    assert code != 0
+    assert victim.read_bytes() == b"untouched"
+    assert "symlink" in capsys.readouterr().err
+    # No verdict was reached — no results.tsv row for an eval that never ran.
+    assert results.load(run_ready / results.PATH) == []
+
+
 def test_human_output_shows_warnings_above_the_verdict(run_ready, monkeypatch, capsys):
     r = verdict.Result(
         status=verdict.Status.DISCARD,

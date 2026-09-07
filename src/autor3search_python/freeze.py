@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import posixpath
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from autor3search_python import containment
 
 STORE_DIR = "frozen"
 MANIFEST_PATH = "frozen/manifest.json"
@@ -53,11 +54,12 @@ def _safe_join(root: Path, rel: str) -> Path:
 
 
 def _is_symlink(path: Path) -> bool:
-    """Lstat, not stat: the question is about the path, not its target."""
-    try:
-        return path.is_symlink()
-    except OSError:
-        return False
+    """Lstat, not stat: the question is about the path, not its target.
+
+    Delegates to `containment`, the one shared implementation every module
+    that opens a path outside the scope gate's view uses.
+    """
+    return containment.is_symlink(path)
 
 
 def _escapes_root(root: Path, path: Path) -> bool:
@@ -69,9 +71,7 @@ def _escapes_root(root: Path, path: Path) -> bool:
     every read or write through it lands wherever that directory really is.
     realpath resolves every symlink in the chain, not just the last one.
     """
-    root_real = os.path.realpath(root)
-    path_real = os.path.realpath(path)
-    return path_real != root_real and not path_real.startswith(root_real + os.sep)
+    return containment.escapes_root(root, path)
 
 
 def _ensure_contained(root: Path, path: Path, rel: str, verb: str) -> None:

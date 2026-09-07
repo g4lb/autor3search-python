@@ -1,6 +1,6 @@
 import pytest
 
-from autor3search_python import results
+from autor3search_python import containment, results
 
 
 def row(**kw):
@@ -95,3 +95,30 @@ def test_blank_lines_are_skipped(tmp_path):
     p = tmp_path / "results.tsv"
     p.write_text(results.HEADER + "\n\nabc\t0.9\t-1.0\tkeep\td\n\n")
     assert len(results.load(p)) == 1
+
+
+def test_append_refuses_a_symlinked_target(tmp_path):
+    """results.tsv is gitignored and its name is waved through the scope gate,
+    so nothing else stops an agent from replacing it with a symlink before an
+    eval runs. Demonstrated: the harness would otherwise append a results row
+    through the link to whatever file it points at, outside the repository."""
+    outside = tmp_path / "victim.txt"
+    outside.write_text("untouched")
+    link = tmp_path / "repo" / "results.tsv"
+    link.parent.mkdir()
+    link.symlink_to(outside)
+    with pytest.raises((results.ResultsError, containment.ContainmentError)):
+        results.append(link, row())
+    assert outside.read_text() == "untouched"
+
+
+def test_append_refuses_a_symlinked_ancestor_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sub").symlink_to(outside)
+    target = repo / "sub" / "results.tsv"
+    with pytest.raises((results.ResultsError, containment.ContainmentError)):
+        results.append(target, row(), root=repo)
+    assert not (outside / "results.tsv").exists()

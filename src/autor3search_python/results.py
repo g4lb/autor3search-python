@@ -13,6 +13,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from autor3search_python import containment
+
 PATH = "results.tsv"
 HEADER = "commit\tscore\tbest_bench_delta\tstatus\tdescription"
 _FIELDS = 5
@@ -54,9 +56,24 @@ def _truncate(s: str) -> str:
     return s if len(s) <= MAX_DESCRIPTION_LEN else s[:MAX_DESCRIPTION_LEN] + "..."
 
 
-def append(path: str | Path, row: Row) -> None:
-    """Add one row, creating the file with a header when needed."""
+def append(path: str | Path, row: Row, *, root: str | Path | None = None) -> None:
+    """Add one row, creating the file with a header when needed.
+
+    `root` defaults to the file's own parent directory. `results.tsv` is
+    gitignored (see cli/init.py) and its name is deliberately waved through
+    the scope gate, so nothing else stops an agent from replacing it with a
+    symlink before an eval runs — the harness would then append its own
+    output through the link to whatever the agent pointed it at, including a
+    file well outside the repository. Guarded here rather than trusted:
+    reading and writing follow symlinks, so the check must run immediately
+    before the open below.
+    """
     p = Path(path)
+    guard_root = Path(root) if root is not None else p.parent
+    try:
+        containment.ensure_contained(guard_root, p, str(p), "append")
+    except containment.ContainmentError as e:
+        raise ResultsError(str(e)) from e
     line = "\t".join(
         [
             _clean(row.commit),
