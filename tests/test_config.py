@@ -1,3 +1,6 @@
+import shutil
+import sys
+
 import pytest
 
 from autor3search_python import config
@@ -57,11 +60,39 @@ def test_load_rejects_an_unknown_key(tmp_path):
         ('benchtime = "quick"', "benchtime"),
         ('timeout = "soon"', "timeout"),
         ("min_rounds = 0", "min_rounds"),
+        ('benchmarks = ["-p/test_a.py::test_b"]', "may not start with"),
+        ('python = "/definitely/not/a/real/executable"', "not an existing"),
+        ('pythonpath = ["/etc"]', "relative"),
+        ('pythonpath = ["../escape"]', "escapes"),
+        ('pythonpath = ["a/../../escape"]', "escapes"),
     ],
 )
 def test_validate_rejects(tmp_path, body, message):
     with pytest.raises(config.ConfigError, match=message):
         config.load(write(tmp_path, body + "\n"))
+
+
+def test_a_benchmark_entry_with_an_internal_dash_is_not_rejected():
+    """Only a node id STARTING with '-' is rejected — argv would parse that as
+    another option. A dash elsewhere is an ordinary, legitimate path component."""
+    config.validate(
+        config.default().__class__(benchmarks=("tests/my-feature/test_a.py::test_b",))
+    )  # must not raise
+
+
+def test_python_accepts_the_running_interpreter(tmp_path):
+    config.load(write(tmp_path, f'python = "{sys.executable}"\n'))  # must not raise
+
+
+def test_python_accepts_a_bare_name_resolvable_on_path(tmp_path):
+    resolvable = shutil.which("python3") or shutil.which("sh")
+    assert resolvable, "test environment has neither python3 nor sh on PATH"
+    name = "python3" if shutil.which("python3") else "sh"
+    config.load(write(tmp_path, f'python = "{name}"\n'))  # must not raise
+
+
+def test_pythonpath_accepts_an_ordinary_relative_entry(tmp_path):
+    config.load(write(tmp_path, 'pythonpath = ["lib", "vendor/thing"]\n'))  # must not raise
 
 
 def test_count_floor_explains_why():

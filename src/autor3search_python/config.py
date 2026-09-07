@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import posixpath
 import re
+import shutil
 import tomllib
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 CONFIG_PATH = ".autor3search/config.toml"
 
@@ -185,3 +188,36 @@ def validate(cfg: Config) -> None:
         parse_duration(str(cfg.timeout))
     except ValueError as e:
         raise ConfigError(f"timeout {cfg.timeout!r} is not a duration: {e}") from e
+    for b in cfg.benchmarks:
+        if b.startswith("-"):
+            raise ConfigError(
+                f"benchmarks entry {b!r} may not start with '-': it becomes a bare argument "
+                f"on the pytest command line (runner.Runner.bench, runner.Runner.compile_gate's "
+                f"sibling invocations), and an entry parsed as another option instead of a node "
+                f"id is argument injection into that command"
+            )
+    if cfg.python:
+        exe = shutil.which(cfg.python) if not Path(cfg.python).is_absolute() else cfg.python
+        if not exe or not Path(exe).is_file() or not os.access(exe, os.X_OK):
+            raise ConfigError(
+                f"python {cfg.python!r} is not an existing, executable file — it becomes "
+                f"argv[0] of every gate and measurement subprocess, so a config shipped in "
+                f"the repository (read the first time a human runs 'baseline') could "
+                f"otherwise point at anything reachable on PATH"
+            )
+    for p in cfg.pythonpath:
+        pp = PurePosixPath(p.replace("\\", "/"))
+        if pp.is_absolute() or (len(str(pp)) > 1 and str(pp)[1] == ":"):
+            raise ConfigError(
+                f"pythonpath entry {p!r} must be relative to the tree root: bench_env joins "
+                f"it as `root / p`, and Path.__truediv__ discards `root` entirely once the "
+                f"right-hand side turns out to be absolute — silently putting an "
+                f"attacker-chosen absolute path on PYTHONPATH for every gate and measurement"
+            )
+        normalized = posixpath.normpath(str(pp))
+        if normalized == ".." or normalized.startswith("../"):
+            raise ConfigError(
+                f"pythonpath entry {p!r} escapes the tree root ({normalized!r}) — it is "
+                f"joined onto both the candidate root and the pinned baseline worktree root "
+                f"and placed on PYTHONPATH for every gate and measurement"
+            )
