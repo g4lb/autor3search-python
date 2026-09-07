@@ -60,12 +60,16 @@ def test_closing_a_job_kills_what_is_still_in_it():
     """`stop --force` relies on this: terminating eval drops the last handle to
     every job it holds, and kill-on-close takes the benchmark tree with it.
     """
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         job = winjob.assign(proc.pid)
         assert job is not None
+        started = time.monotonic()
         job.close()
-        assert proc.wait(timeout=10) != 0
+        proc.wait(timeout=15)
+        # The exit code is not the evidence — a killed process can report 0.
+        # Dying decades before its own sleep would have ended is.
+        assert time.monotonic() - started < 10
     finally:
         if proc.poll() is None:  # pragma: no cover - only if kill-on-close failed
             proc.kill()

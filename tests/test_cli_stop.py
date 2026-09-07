@@ -61,9 +61,14 @@ def test_force_survives_a_corrupt_pid_file(started, capsys, pid_contents):
 
 
 def test_force_signals_the_running_eval(started, monkeypatch, capsys):
+    """Whichever mechanism this platform uses, -force must reach the eval:
+    its process group on POSIX, the process itself where there is no signal
+    it could act on. Both are patched so the assertion is about the pid
+    reaching one of them, not about which platform is running the test."""
     monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
     signalled = []
     monkeypatch.setattr(cli_stop, "_signal_group", lambda pid: signalled.append(pid))
+    monkeypatch.setattr(cli_stop, "_terminate", lambda pid: signalled.append(pid))
     cli_main.main(["stop", "-C", str(started), "-force"])
     assert signalled == [4242]
 

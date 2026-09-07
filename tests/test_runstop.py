@@ -144,10 +144,12 @@ class _FakeMsvcrt:
 
     def __init__(self, *, refuse: bool = False) -> None:
         self.calls: list[tuple[int, int]] = []
+        self.offsets: list[int] = []
         self.refuse = refuse
 
     def locking(self, fd: int, mode: int, nbytes: int) -> None:
         self.calls.append((mode, nbytes))
+        self.offsets.append(os.lseek(fd, 0, os.SEEK_CUR))
         if self.refuse and mode == self.LK_NBLCK:
             raise OSError(13, "another process has locked a portion of the file")
 
@@ -208,3 +210,18 @@ def test_windows_release_unlocks_and_closes_before_deleting(tmp_path, fake_windo
         pass
     assert order == ["unlock", "close", "unlink"]
     assert not (d / runstop.EVAL_PID_FILE).exists()
+
+
+def test_windows_locks_a_byte_nothing_needs_to_read(tmp_path, fake_windows):
+    """Windows file locks are mandatory, not advisory: the locked range cannot
+    be READ by another handle either. Locking byte 0 therefore locked the pid
+    text itself, and every eval_running and every refused claim — the paths
+    that exist to report which pid holds the run — failed with a permission
+    error instead of an answer. The lock has to sit past anything the file
+    contains, so the bytes stay readable while the claim is held.
+    """
+    fake = fake_windows()
+    d = tmp_path / "state"
+    with runstop.claim_eval(d, 4242):
+        assert (d / runstop.EVAL_PID_FILE).stat().st_size < runstop._LOCK_OFFSET
+        assert fake.offsets and set(fake.offsets) == {runstop._LOCK_OFFSET}

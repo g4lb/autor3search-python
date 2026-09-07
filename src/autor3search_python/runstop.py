@@ -20,6 +20,11 @@ EVAL_PID_FILE = "eval.pid"
 
 _POSIX = os.name == "posix"
 
+# The byte the Windows claim locks: past the end of the pid file, never inside
+# it. See _try_lock for why locking the data itself was a bug rather than a
+# detail. Any fixed offset beyond the file works; this one is far past a pid.
+_LOCK_OFFSET = 1 << 20
+
 
 class StopError(Exception):
     """A stop sentinel or eval claim that cannot be read or taken."""
@@ -60,10 +65,18 @@ def _try_lock(fd: int) -> bool:
     Both platforms lock the file itself rather than trusting its existence: a
     pid file left behind by an eval that was killed must read as free, and a
     pid file whose holder is alive must read as taken, and only the kernel
-    knows which is which. Windows locks a one-byte range from the current file
-    position, so every call here seeks to 0 first — a lock taken at whatever
-    offset the last write left behind would be a different lock each time, and
-    two evals would both believe they had it.
+    knows which is which.
+
+    Windows locks a one-byte range from the current file position, so every
+    call here seeks to the same offset first — a lock taken at whatever offset
+    the last write left behind would be a different lock each time, and two
+    evals would both believe they had it. That offset is deliberately past the
+    end of the file, not byte 0: a Windows lock is mandatory rather than
+    advisory, and a locked range cannot be READ by another handle either, so
+    locking the pid text made `eval_running` and every refused claim fail with
+    a permission error in place of the answer they exist to give. A byte past
+    EOF locks nothing anyone needs to read; a lock there is legal and is
+    exactly as exclusive.
     """
     if _POSIX:
         import fcntl
@@ -76,7 +89,7 @@ def _try_lock(fd: int) -> bool:
 
     import msvcrt
 
-    os.lseek(fd, 0, os.SEEK_SET)
+    os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
     try:
         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
     except OSError:
@@ -93,7 +106,7 @@ def _unlock(fd: int) -> None:
 
     import msvcrt
 
-    os.lseek(fd, 0, os.SEEK_SET)
+    os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
     with contextlib.suppress(OSError):
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
@@ -138,9 +151,8 @@ def claim_eval(state_dir: str | Path, pid: int) -> Iterator[None]:
         locked = True
         os.ftruncate(fd, 0)
         # lseek + write rather than pwrite: os.pwrite does not exist on
-        # Windows. The seek is not incidental — _try_lock and _unlock both
-        # lock the byte at offset 0, so the position must be left where they
-        # expect it either way.
+        # Windows. _try_lock and _unlock each seek to _LOCK_OFFSET themselves,
+        # so this seek only has to put the pid at the start of the file.
         os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, f"{pid}\n".encode())
         yield

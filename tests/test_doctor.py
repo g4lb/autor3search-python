@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -306,7 +307,9 @@ def test_doctor_uses_the_configured_interpreter(git_repo, capsys):
     fake_python = git_repo / "fake-python"
     fake_python.write_text("#!/bin/sh\necho 'not really python' 1>&2\nexit 1\n")
     fake_python.chmod(0o755)
-    (cfg_dir / "config.toml").write_text(f'python = "{fake_python}"\n')
+    # json.dumps: a TOML basic string needs its backslashes escaped, and a
+    # Windows path written raw is a parse error rather than an interpreter.
+    (cfg_dir / "config.toml").write_text(f"python = {json.dumps(str(fake_python))}\n")
     assert config.load(cfg_dir / "config.toml").python == str(fake_python)  # sanity
 
     cli_main.main(["doctor", "-C", str(git_repo)])

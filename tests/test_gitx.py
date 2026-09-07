@@ -1,3 +1,6 @@
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from autor3search_python import gitx
@@ -93,3 +96,31 @@ def test_path_in_tree_reads_the_commit_not_the_worktree(git_repo):
     assert gitx.path_in_tree(git_repo, "HEAD", "pytest.ini") is False
     git(git_repo, "add", "-f", "pytest.ini")
     assert gitx.path_in_tree(git_repo, "HEAD", "pytest.ini") is False
+
+
+def test_git_output_is_decoded_as_utf8_not_the_platform_locale(monkeypatch, git_repo):
+    """text=True alone decodes with the locale's encoding, which is cp1252 on
+    a default Windows install: a path like `café.py` came back as `caf?.py`,
+    and a gate that compares those names against the ones on disk would then
+    be reasoning about a file that does not exist. git speaks UTF-8; say so.
+    """
+    seen = {}
+    real_run = subprocess.run
+
+    def capture(*args, **kwargs):
+        seen.update(kwargs)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(gitx.subprocess, "run", capture)
+    gitx.head_commit(git_repo)
+    assert seen.get("encoding") == "utf-8"
+
+
+def test_root_is_returned_in_the_platforms_own_path_form(monkeypatch, git_repo):
+    """git prints POSIX separators everywhere, Windows included, so its
+    `rev-parse --show-toplevel` answer is `C:/Users/...` there. Every caller
+    wraps this in Path() and does not care, but `doctor` prints it verbatim,
+    and a run's state directory is keyed on the repository path — one form,
+    not two."""
+    monkeypatch.setattr(gitx, "_git", lambda d, *a: "C:/Users/x/repo")
+    assert gitx.root(git_repo) == str(Path("C:/Users/x/repo"))

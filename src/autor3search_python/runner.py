@@ -82,13 +82,20 @@ def _compile_exclude() -> str:
     experiment on a syntax error in a directory no one was measuring.
 
     compileall matches this with `search` against each path it walks. The extra
-    `[^/]` in the dotfile branch matters when a caller passes "." (this
+    `[^/\\]` in the dotfile branch matters when a caller passes "." (this
     module's own test does): compileall then reports files as "./bad.py", and a
     bare `(^|/)\\.` matches that leading "./" itself, excluding every file in
     the tree instead of just dotfiles and dotdirs.
+
+    Both separators, because compileall reports what it walks in the platform's
+    own form: on Windows that same call yields ".\\bad.py", where a `/`-only
+    character class reads the backslash as "any character but /" and excludes
+    the entire tree. That is not a cosmetic difference — the compile gate then
+    compiles nothing and passes, so a syntax error reached the pytest gate as a
+    collection error (FAIL) instead of failing here as a CRASH.
     """
     names = "|".join(re.escape(d) for d in sorted(discover.SKIP_DIRS))
-    return rf"(^|/)(\.[^/]|({names})(/|$))"
+    return rf"(^|[/\\])(\.[^/\\]|({names})([/\\]|$))"
 
 
 def validate_node_ids(node_ids: Sequence[str]) -> None:
