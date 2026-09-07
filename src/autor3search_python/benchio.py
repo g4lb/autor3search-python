@@ -187,6 +187,51 @@ def compare(base: Set, cand: Set, name: str, alpha: float = DEFAULT_ALPHA) -> De
     )
 
 
+def total_reported_seconds(payload: str | bytes | dict) -> float | None:
+    """Sum of pytest-benchmark's own reported total time across every
+    benchmark in one JSON report — independent of `stat`, which only ever
+    picks one center per benchmark.
+
+    Used solely by the harness's own wall-clock timing-plausibility tripwire
+    (see measure.TimingImplausibleError), never by scoring. Returns None
+    when the report carries no usable timing field at all — e.g. an
+    unexpected pytest-benchmark schema — rather than 0.0, so a caller cannot
+    mistake "nothing to measure" for "instant", which would make every
+    subsequent ratio blow up to a false positive.
+    """
+    if isinstance(payload, dict):
+        doc = payload
+    else:
+        text = payload.decode("utf-8") if isinstance(payload, bytes) else payload
+        try:
+            doc = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+    if not isinstance(doc, dict):
+        return None
+    entries = doc.get("benchmarks")
+    if not isinstance(entries, list):
+        return None
+    total = 0.0
+    found = False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        st = entry.get("stats")
+        if not isinstance(st, dict):
+            continue
+        t = st.get("total")
+        if isinstance(t, int | float):
+            total += float(t)
+            found = True
+            continue
+        median, rounds = st.get("median"), st.get("rounds")
+        if isinstance(median, int | float) and isinstance(rounds, int | float):
+            total += float(median) * float(rounds)
+            found = True
+    return total if found else None
+
+
 def compare_all(base: Set, cand: Set, alpha: float = DEFAULT_ALPHA) -> list[Delta]:
     """Compare every benchmark measured at baseline, sorted by name.
 

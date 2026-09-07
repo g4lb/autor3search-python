@@ -31,6 +31,20 @@ CAP_BYTES = 4 * 1024 * 1024  # per stream
 _TRUNCATED = "\n[output truncated]\n"
 _GRACE_SECONDS = 5.0
 
+# Every entry-point ("pytest11") plugin autoloading finds via importlib.metadata
+# on sys.path — including one an agent supplies itself, e.g. an
+# `evil-1.0.dist-info/entry_points.txt` at the repository root declaring one —
+# gets loaded into the SAME process that then times the benchmark. That process
+# is not a sandbox: a plugin loaded this way can monkeypatch anything, pytest-
+# benchmark's own accounting included. Disabling autoload and loading only the
+# plugins this harness names explicitly closes that route. pytest-benchmark is
+# itself an entry-point plugin (see _BENCHMARK_PLUGIN below), so every pytest
+# invocation that needs it — `pytest_gate` and `bench` here, and profile.py's
+# CPU pass — must now load it explicitly, or it silently stops being measured
+# at all rather than being measured insecurely.
+_DISABLE_AUTOLOAD_ENV = "PYTEST_DISABLE_PLUGIN_AUTOLOAD"
+BENCHMARK_PLUGIN = "pytest_benchmark.plugin"
+
 _POSIX = os.name == "posix"
 
 
@@ -204,6 +218,11 @@ class Runner:
         the gate and the measurement resolve modules by different rules, and a
         change could pass correctness under one resolution while being timed
         under another — two different programs, one verdict.
+
+        `--benchmark-disable` is a pytest-benchmark option, and plugin
+        autoloading is off (see `bench_env`), so pytest-benchmark is loaded
+        explicitly here too — without it this flag would be "unrecognized
+        arguments" and the gate would fail on every run, not silently pass.
         """
         return self.python_run(
             "-m",
@@ -211,6 +230,8 @@ class Runner:
             "-q",
             "-p",
             "no:cacheprovider",
+            "-p",
+            BENCHMARK_PLUGIN,
             "--import-mode=importlib",
             "--benchmark-disable",
         )
@@ -223,6 +244,8 @@ class Runner:
             "-q",
             "-p",
             "no:cacheprovider",
+            "-p",
+            BENCHMARK_PLUGIN,  # loaded explicitly: autoloading is off, see bench_env
             "--import-mode=importlib",
             "--benchmark-only",
             f"--benchmark-json={json_path}",
@@ -268,6 +291,11 @@ def bench_env(
     # every gate and both bench sides.
     for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS"):
         env.pop(var, None)
+    # Forced, not merely stripped like the two above: an unset
+    # PYTEST_DISABLE_PLUGIN_AUTOLOAD does not merely inherit an ambient
+    # default, it turns autoloading back ON, which is the hole this closes.
+    # See the module docstring-adjacent comment above _DISABLE_AUTOLOAD_ENV.
+    env[_DISABLE_AUTOLOAD_ENV] = "1"
     return env
 
 

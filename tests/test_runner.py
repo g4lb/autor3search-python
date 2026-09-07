@@ -215,6 +215,84 @@ def test_pytest_gate_resolves_modules_the_same_way_bench_does(tmp_path, monkeypa
     assert "--import-mode=importlib" in bench_args
 
 
+def test_bench_env_disables_pytest_plugin_autoload(tmp_path):
+    """Every entry-point ("pytest11") plugin autoloading would find on
+    sys.path — including one an agent supplies itself via a fabricated
+    `*.dist-info/entry_points.txt` at the repository root — loads into the
+    SAME process that then times the benchmark. Disabling autoload and
+    loading only the plugins this harness names explicitly (pytest-benchmark
+    included, see BENCHMARK_PLUGIN) closes that route."""
+    env = runner.bench_env(tmp_path, config.default(), base_env={})
+    assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+
+def test_bench_env_forces_autoload_off_even_if_ambient_env_disagrees(tmp_path):
+    env = runner.bench_env(
+        tmp_path, config.default(), base_env={"PYTEST_DISABLE_PLUGIN_AUTOLOAD": ""}
+    )
+    assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+
+
+def test_pytest_gate_and_bench_load_pytest_benchmark_explicitly(tmp_path, monkeypatch):
+    """With autoloading off, `--benchmark-disable` and `--benchmark-only`
+    would otherwise be unrecognized arguments — pytest-benchmark must be
+    loaded by name in both invocations that need it."""
+    seen = []
+    rr = r(tmp_path)
+    monkeypatch.setattr(
+        rr, "python_run", lambda *a: seen.append(a) or runner.Result((), "", "", 0, False, 0.0)
+    )
+    rr.pytest_gate()
+    rr.bench(["tests/test_x.py::test_y"], tmp_path / "out.json", config.default())
+    gate_args, bench_args = seen
+    assert runner.BENCHMARK_PLUGIN in gate_args
+    assert runner.BENCHMARK_PLUGIN in bench_args
+
+
+def test_a_fabricated_entry_point_plugin_is_not_loaded_and_bench_still_works(tmp_path):
+    """Demonstrated attack class: a `pytest11` entry point declared in a
+    dist-info directory dropped at the repository root is exactly as
+    discoverable by `importlib.metadata` as a real one, and a plugin loaded
+    this way runs inside the same process that times the benchmark — able to
+    monkeypatch pytest-benchmark's own accounting. This reproduces it end to
+    end: the evil plugin must not run, and pytest-benchmark — itself an
+    entry-point plugin — must still produce a real JSON report."""
+    import json
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")
+    (tmp_path / "pkg" / "mod.py").write_text("def work():\n    return sum(range(50))\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_mod.py").write_text(
+        "from pkg.mod import work\n\n\ndef test_w(benchmark):\n    benchmark(work)\n"
+    )
+
+    marker = tmp_path / "evil-marker.txt"
+    distinfo = tmp_path / "evil-1.0.dist-info"
+    distinfo.mkdir()
+    (distinfo / "METADATA").write_text("Metadata-Version: 2.1\nName: evil\nVersion: 1.0\n")
+    (distinfo / "entry_points.txt").write_text("[pytest11]\nevil = evilplugin\n")
+    (tmp_path / "evilplugin.py").write_text(
+        f"def pytest_configure(config):\n    open({str(marker)!r}, 'w').write('pwned')\n"
+    )
+
+    cfg = config.default()
+    env = runner.bench_env(tmp_path, cfg)
+    rr = runner.Runner(tmp_path, 30, env=env, python=cfg.python)
+
+    gate_res = rr.pytest_gate()
+    assert gate_res.ok() is True
+    assert not marker.exists(), "the fabricated entry-point plugin must not have run"
+
+    json_path = tmp_path / "bench.json"
+    quick_cfg = config.default().__class__(benchtime="200ms", min_rounds=1)
+    bench_res = rr.bench(["tests/test_mod.py::test_w"], json_path, quick_cfg)
+    assert bench_res.ok() is True
+    doc = json.loads(json_path.read_text())
+    assert [b["fullname"] for b in doc["benchmarks"]] == ["tests/test_mod.py::test_w"]
+    assert not marker.exists()
+
+
 def test_bench_env_strips_ambient_pytest_flags(tmp_path):
     """The agent is the process that invokes `eval`, so it owns this
     environment. PYTEST_ADDOPTS is a pytest.ini it never has to write down:
