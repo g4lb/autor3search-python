@@ -1,0 +1,50 @@
+name: release
+
+# Publishes to PyPI when a v* tag is pushed, through Trusted Publishing:
+# PyPI verifies GitHub's short-lived OIDC token for this repository and this
+# workflow file, so no API token exists to store, leak or rotate.
+#
+# One-time setup on PyPI (project → Publishing → Add a new publisher):
+#   Owner: g4lb   Repository: autor3search-python
+#   Workflow: release.yml   Environment: (leave blank)
+#
+# To release: bump `version` in pyproject.toml, commit, then
+#   git tag v<version> && git push origin v<version>
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # The only permission Trusted Publishing needs: mint an OIDC token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: the tag must be the version it claims to be
+        # A tag that disagrees with pyproject.toml would publish a version
+        # nobody can check out. Refuse rather than guess which one is right.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          if [ "$tag" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match pyproject version $version" >&2
+            exit 1
+          fi
+          echo "publishing $version"
+
+      - run: python -m pip install -e ".[dev]" build
+
+      # The same gates ci.yml runs. A release is not the place to find out
+      # that the tagged commit does not pass them.
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - run: python -m pytest -m "not slow" -q
+
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
