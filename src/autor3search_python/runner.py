@@ -15,6 +15,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -114,11 +115,61 @@ def validate_node_ids(node_ids: Sequence[str]) -> None:
         )
 
 
-def _cap(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    if len(raw) <= CAP_BYTES:
-        return text
-    return text[:CAP_BYTES] + _TRUNCATED
+class _BoundedReader(threading.Thread):
+    """Drains one subprocess pipe on its own thread, retaining only the
+    first `cap_bytes` of it — reading, and then discarding, everything past
+    that — so a chatty child's output does not become this process's own
+    peak memory.
+
+    A pipe must be drained continuously while the subprocess runs, or the
+    child blocks the moment the OS pipe buffer fills. That used to be done
+    with `Popen.communicate()`, which buffers the ENTIRE stream in memory
+    before the old `_cap` helper ever got a chance to look at it: measured
+    against a chatty child, harness peak RSS went 1 MB of child output -> 26
+    MB, 8 -> 58, 64 -> 265, 256 MB -> 1030 MB of THIS process — about 4x the
+    child's own output, of which only CAP_BYTES was ever kept. That
+    allocation happens concurrently with the process being timed, once per
+    side per round, so a candidate that merely adds logging shifts the
+    harness's own memory footprint on one side of the comparison and not
+    the other. Reading in bounded chunks and discarding past the cap keeps
+    this process's memory bounded regardless of how much output the code
+    under test produces.
+
+    Threaded, not read-then-truncate, for the same reason `communicate()`
+    itself uses threads: stdout and stderr must be drained concurrently, or
+    a child that fills one pipe while this process waits on the other
+    deadlocks both of them.
+    """
+
+    def __init__(self, pipe: IO[bytes] | None, cap_bytes: int) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self._cap_bytes = cap_bytes
+        self._buf = bytearray()
+        self._truncated = False
+
+    def run(self) -> None:
+        if self._pipe is None:
+            return
+        try:
+            while True:
+                chunk = self._pipe.read(65536)
+                if not chunk:
+                    break
+                remaining = self._cap_bytes - len(self._buf)
+                if remaining > 0:
+                    self._buf.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    self._truncated = True
+        except (OSError, ValueError):
+            pass  # the pipe was closed out from under us during shutdown
+        finally:
+            with contextlib.suppress(OSError):
+                self._pipe.close()
+
+    def text(self) -> str:
+        decoded = bytes(self._buf).decode("utf-8", errors="replace")
+        return decoded + _TRUNCATED if self._truncated else decoded
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
@@ -175,9 +226,18 @@ class Runner:
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
         proc = subprocess.Popen(list(args), **popen_kwargs)
+        # Draining starts before wait(): if nothing reads either pipe while
+        # the child fills the other one, both this process and the child
+        # deadlock. Same reason `communicate()` uses threads internally —
+        # these replace that call so the cap can apply to the read itself
+        # rather than to a buffer `communicate()` already grew unbounded.
+        out_reader = _BoundedReader(proc.stdout, CAP_BYTES)
+        err_reader = _BoundedReader(proc.stderr, CAP_BYTES)
+        out_reader.start()
+        err_reader.start()
         timed_out = False
         try:
-            out, err = proc.communicate(timeout=self.timeout)
+            proc.wait(timeout=self.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
             _kill_group(proc)
@@ -185,15 +245,19 @@ class Runner:
             # setsid itself) would otherwise block this call forever. An
             # unattended overnight loop must return timed_out=True rather than
             # hang — a wrong answer beats nobody noticing it never came back.
-            try:
-                out, err = proc.communicate(timeout=_GRACE_SECONDS)
-            except subprocess.TimeoutExpired as e:
-                out, err = e.stdout, e.stderr
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=_GRACE_SECONDS)
+        # Bounded for the same reason as the wait() above: a pipe an escaped
+        # grandchild still holds open stays "readable" (blocked, not EOF)
+        # indefinitely, and the reader thread for it would otherwise never
+        # return. Whatever each thread has already captured is kept either way.
+        out_reader.join(timeout=_GRACE_SECONDS)
+        err_reader.join(timeout=_GRACE_SECONDS)
         duration = time.monotonic() - start
         res = Result(
             args=tuple(args),
-            stdout=_cap(out or b""),
-            stderr=_cap(err or b""),
+            stdout=out_reader.text(),
+            stderr=err_reader.text(),
             exit_code=-1 if timed_out else proc.returncode,
             timed_out=timed_out,
             duration=duration,

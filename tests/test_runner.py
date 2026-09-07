@@ -82,6 +82,54 @@ def test_output_is_capped(tmp_path, monkeypatch):
     assert "truncated" in res.stdout
 
 
+def test_stdout_and_stderr_are_both_captured_up_to_the_cap(tmp_path, monkeypatch):
+    """Both pipes must be drained (and each capped independently), not just
+    whichever one happens to be read first."""
+    monkeypatch.setattr(runner, "CAP_BYTES", 1000)
+    res = r(tmp_path).run(
+        sys.executable,
+        "-c",
+        "import sys; print('o' * 50000); print('e' * 50000, file=sys.stderr)",
+    )
+    assert res.stdout.startswith("o" * 100)
+    assert "truncated" in res.stdout
+    assert res.stderr.startswith("e" * 100)
+    assert "truncated" in res.stderr
+
+
+def test_harness_memory_stays_bounded_for_a_very_chatty_child(tmp_path):
+    """The bug: Runner used to buffer a child's ENTIRE output via
+    Popen.communicate() before capping it, so this harness's own peak memory
+    scaled with however much output the code under test produced — measured
+    at roughly 4x the child's output, concurrently with the process being
+    timed. Reading in bounded chunks and discarding past CAP_BYTES keeps
+    this process's own memory close to constant regardless of how chatty
+    the child is."""
+    import resource
+
+    def peak_rss_kb() -> int:
+        # ru_maxrss is KB on Linux, bytes on macOS.
+        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return raw if sys.platform != "darwin" else raw // 1024
+
+    before = peak_rss_kb()
+    # 200 MB of child stdout — large enough that the old buffer-everything
+    # approach would balloon this process's RSS by roughly that much; the
+    # fixed version reads and discards past CAP_BYTES (4 MB) so this
+    # process's own growth stays on the order of the cap, not the output.
+    script = "import sys; sys.stdout.write('x' * (200 * 1024 * 1024))"
+    res = r(tmp_path, timeout=60).run(sys.executable, "-c", script)
+    after = peak_rss_kb()
+
+    assert res.ok() is True
+    assert "truncated" in res.stdout
+    growth_mb = (after - before) / 1024
+    assert growth_mb < 100, (
+        f"harness RSS grew {growth_mb:.1f} MB measuring a 200 MB-output child — "
+        f"output capping is not bounding this process's own memory"
+    )
+
+
 def test_tail_prefers_stderr_and_falls_back_to_stdout(tmp_path):
     res = r(tmp_path).run(
         sys.executable, "-c", "import sys; [print(i, file=sys.stderr) for i in range(10)]"

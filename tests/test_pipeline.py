@@ -792,3 +792,70 @@ def test_is_dependency_file():
     assert pipeline.is_dependency_file("constraints.txt")
     assert not pipeline.is_dependency_file("pkg/pyproject.toml")
     assert not pipeline.is_dependency_file("pkg/mod.py")
+
+
+# --- run.log rotation ------------------------------------------------------
+
+
+def test_rotate_run_log_leaves_a_small_log_alone(tmp_path):
+    log_path = tmp_path / pipeline.RUN_LOG_NAME
+    log_path.write_text("small transcript\n")
+    pipeline.rotate_run_log(tmp_path)
+    assert log_path.read_text() == "small transcript\n"
+    assert not (tmp_path / pipeline.RUN_LOG_BACKUP_NAME).exists()
+
+
+def test_rotate_run_log_does_nothing_when_no_log_exists_yet(tmp_path):
+    pipeline.rotate_run_log(tmp_path)  # must not raise
+    assert not (tmp_path / pipeline.RUN_LOG_NAME).exists()
+
+
+def test_rotate_run_log_rolls_over_past_the_size_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "RUN_LOG_MAX_BYTES", 100)
+    log_path = tmp_path / pipeline.RUN_LOG_NAME
+    log_path.write_text("x" * 200)
+    pipeline.rotate_run_log(tmp_path)
+    assert not log_path.exists()  # a fresh append below starts a clean transcript
+    assert (tmp_path / pipeline.RUN_LOG_BACKUP_NAME).read_text() == "x" * 200
+
+
+def test_rotate_run_log_keeps_only_one_backup(tmp_path, monkeypatch):
+    """Unbounded backups would just move the disk-filling problem sideways."""
+    monkeypatch.setattr(pipeline, "RUN_LOG_MAX_BYTES", 100)
+    (tmp_path / pipeline.RUN_LOG_BACKUP_NAME).write_text("stale backup")
+    log_path = tmp_path / pipeline.RUN_LOG_NAME
+    log_path.write_text("y" * 200)
+    pipeline.rotate_run_log(tmp_path)
+    assert (tmp_path / pipeline.RUN_LOG_BACKUP_NAME).read_text() == "y" * 200
+
+
+def test_rotate_run_log_bounds_growth_across_many_experiments(tmp_path):
+    """The bug this closes: with no cap, every experiment's (already
+    per-stream-capped) transcript just keeps appending, so a long overnight
+    loop writes tens of GB into the user's working tree. Simulates many
+    experiments each appending a chunk close to the rotation threshold."""
+    log_path = tmp_path / pipeline.RUN_LOG_NAME
+    chunk = "t" * (pipeline.RUN_LOG_MAX_BYTES // 4)
+    for _ in range(20):
+        pipeline.rotate_run_log(tmp_path)
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(chunk)
+    total_on_disk = sum(
+        p.stat().st_size for p in (log_path, tmp_path / pipeline.RUN_LOG_BACKUP_NAME) if p.exists()
+    )
+    # However many experiments ran, at most "current + one backup" survive.
+    assert total_on_disk <= 2 * pipeline.RUN_LOG_MAX_BYTES + len(chunk)
+
+
+def test_rotate_run_log_refuses_a_symlinked_log(tmp_path, monkeypatch):
+    """run.log is gitignored and its name is waved through the scope gate —
+    the same symlink-swap concern containment.py exists for elsewhere. A
+    no-op here is safe: the containment check right before the real open in
+    cli/eval.py still catches and reports it."""
+    monkeypatch.setattr(pipeline, "RUN_LOG_MAX_BYTES", 1)
+    outside = tmp_path / "outside.log"
+    outside.write_bytes(b"do not touch")
+    log_path = tmp_path / pipeline.RUN_LOG_NAME
+    log_path.symlink_to(outside)
+    pipeline.rotate_run_log(tmp_path)  # must not raise, and must not touch `outside`
+    assert outside.read_bytes() == b"do not touch"

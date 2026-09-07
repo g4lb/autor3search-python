@@ -129,6 +129,7 @@ def test_gitignore_names_the_harness_output_paths_by_import(repo_with_benchmark)
     """Renaming results.tsv or run.log must not silently start committing them."""
     assert results.PATH in cli_init.GITIGNORE_ENTRIES
     assert pipeline.RUN_LOG_NAME in cli_init.GITIGNORE_ENTRIES
+    assert pipeline.RUN_LOG_BACKUP_NAME in cli_init.GITIGNORE_ENTRIES
 
 
 def test_gitignore_keeps_the_harness_own_bytecode_out_of_the_agents_commits(

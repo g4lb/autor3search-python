@@ -140,6 +140,13 @@ def run(args: list[str]) -> int:
         print(f"autor3search-python eval: {e}", file=sys.stderr)
         return EXIT_USAGE
 
+    # Rotates run.log to run.log.1 once it passes RUN_LOG_MAX_BYTES, so an
+    # unattended overnight loop's transcript does not grow without bound.
+    # Before the containment check below: rotation is a no-op whenever it
+    # cannot safely touch run.log, and that check reports the same
+    # tampering with a real error rather than silently proceeding.
+    pipeline.rotate_run_log(ctx.root)
+
     try:
         # run.log's name is deliberately waved through the scope gate (it is
         # the harness's own output) and it is gitignored, so nothing else

@@ -30,6 +30,7 @@ GITIGNORE_ENTRIES = (
     "!.autor3search/config.toml",
     results.PATH,
     pipeline.RUN_LOG_NAME,
+    pipeline.RUN_LOG_BACKUP_NAME,  # rotate_run_log's one backup; see pipeline.py
     "__pycache__/",
     "*.py[cod]",
 )
