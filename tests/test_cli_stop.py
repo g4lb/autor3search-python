@@ -1,3 +1,5 @@
+import signal
+
 import pytest
 
 from autor3search_python import runstop, state
@@ -59,9 +61,14 @@ def test_force_survives_a_corrupt_pid_file(started, capsys, pid_contents):
 
 
 def test_force_signals_the_running_eval(started, monkeypatch, capsys):
+    """Whichever mechanism this platform uses, -force must reach the eval:
+    its process group on POSIX, the process itself where there is no signal
+    it could act on. Both are patched so the assertion is about the pid
+    reaching one of them, not about which platform is running the test."""
     monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
     signalled = []
     monkeypatch.setattr(cli_stop, "_signal_group", lambda pid: signalled.append(pid))
+    monkeypatch.setattr(cli_stop, "_terminate", lambda pid: signalled.append(pid))
     cli_main.main(["stop", "-C", str(started), "-force"])
     assert signalled == [4242]
 
@@ -77,29 +84,44 @@ def test_group_signal_target_negates_a_real_pid():
     assert cli_stop.group_signal_target(4242) == -4242
 
 
-def test_force_on_non_posix_refuses_to_signal_and_reports_clearly(started, monkeypatch, capsys):
+def test_force_on_windows_terminates_the_eval_outright(started, monkeypatch, capsys):
     """This machine cannot actually run Windows, so this fakes only os.name and
-    checks our own guard fires — not real Windows behaviour. Without the guard,
-    `_signal_group` calls os.killpg, which does not exist on that platform:
-    an AttributeError traceback, not a clean refusal. `_signal_group` is
-    deliberately NOT monkeypatched here (unlike test_force_signals_the_running_eval)
-    so a regression that removes the guard would hit the real os.killpg call
-    and fail with a traceback instead of passing silently."""
+    checks our own branch fires. Windows has no signal an eval can act on
+    mid-benchmark, so -force there ends the process instead of asking it to
+    stop — and the process, not its negated pid: os.kill takes a real pid on
+    that platform, and a group target of -4242 would be nonsense.
+
+    The eval's job objects die with it, so the benchmark tree goes too."""
     monkeypatch.setattr(cli_stop, "_POSIX", False)
     monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
+    killed = []
+    monkeypatch.setattr(cli_stop.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     code = cli_main.main(["stop", "-C", str(started), "-force"])
-    err = capsys.readouterr().err
-    assert code == EXIT_USAGE
-    assert "cannot signal the running eval (pid 4242)" in err
-    assert "stop --force relies on POSIX process groups" in err
-    assert "graceful stop request has still been written" in err
-    assert "interrupt the running agent yourself" in err
+    out = capsys.readouterr().out
+    assert code == 0
+    assert killed == [(4242, signal.SIGTERM)]
+    assert "terminated the running eval (pid 4242)" in out
+    assert "immediate" in out
     assert runstop.stop_requested(state.state_dir(started, "t1")) is True
 
 
-def test_force_on_posix_is_unaffected_when_no_eval_is_running(started, monkeypatch):
-    """The non-POSIX guard must not fire when there is nothing to signal —
-    that path already behaves identically to POSIX (nothing to break)."""
+def test_force_on_windows_reports_a_termination_it_could_not_perform(started, monkeypatch, capsys):
+    """An eval that exited between the claim check and the kill, or one this
+    user may not touch, must be reported rather than swallowed — the human is
+    about to assume nothing is running."""
+    monkeypatch.setattr(cli_stop, "_POSIX", False)
+    monkeypatch.setattr(runstop, "eval_running", lambda d: (4242, True))
+
+    def boom(pid, sig):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(cli_stop.os, "kill", boom)
+    code = cli_main.main(["stop", "-C", str(started), "-force"])
+    assert code == EXIT_USAGE
+    assert "could not stop pid 4242" in capsys.readouterr().err
+
+
+def test_force_off_posix_is_unaffected_when_no_eval_is_running(started, monkeypatch):
     monkeypatch.setattr(cli_stop, "_POSIX", False)
     monkeypatch.setattr(runstop, "eval_running", lambda d: (0, False))
     assert cli_main.main(["stop", "-C", str(started), "-force"]) == 0

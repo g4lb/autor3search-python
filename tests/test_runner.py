@@ -1,3 +1,5 @@
+import os
+import re
 import sys
 import time
 
@@ -44,10 +46,16 @@ def test_timeout_kills_grandchildren(tmp_path):
     """go test runs its benchmark as a grandchild; pytest does too. A survivor
     burns CPU and corrupts every later measurement on the machine."""
     marker = tmp_path / "alive.txt"
+    # marker.as_posix(): a Windows path interpolated raw would put "\\U" of
+    # C:\\Users into the inner script's own non-raw string literal, and the
+    # child would die of a SyntaxError instead of outliving anything — a test
+    # that passes for the wrong reason. Python opens forward-slash paths on
+    # Windows too.
     script = (
         "import subprocess, sys, time\n"
         f"subprocess.Popen([sys.executable, '-c', "
-        f"\"import time, pathlib; time.sleep(6); pathlib.Path(r'{marker}').write_text('x')\"])\n"
+        f'"import time, pathlib; time.sleep(6); '
+        f"pathlib.Path(r'{marker.as_posix()}').write_text('x')\"])\n"
         "time.sleep(30)\n"
     )
     res = runner.Runner(tmp_path, 1).run(sys.executable, "-c", script)
@@ -58,7 +66,7 @@ def test_timeout_kills_grandchildren(tmp_path):
 
 @pytest.mark.slow
 def test_recovery_communicate_is_bounded_when_a_grandchild_escapes_the_group(tmp_path):
-    """A grandchild that calls os.setsid() escapes _kill_group's killpg
+    """A grandchild that calls os.setsid() escapes _kill_tree's killpg
     entirely and, inheriting the pipe fd, can keep it open indefinitely. An
     unbounded recovery communicate() would then block forever; Runner.run
     must still return, with timed_out=True, within a bounded wall time."""
@@ -105,7 +113,9 @@ def test_harness_memory_stays_bounded_for_a_very_chatty_child(tmp_path):
     timed. Reading in bounded chunks and discarding past CAP_BYTES keeps
     this process's own memory close to constant regardless of how chatty
     the child is."""
-    import resource
+    resource = pytest.importorskip(
+        "resource", reason="peak RSS is measured through a POSIX-only module"
+    )
 
     def peak_rss_kb() -> int:
         # ru_maxrss is KB on Linux, bytes on macOS.
@@ -154,7 +164,7 @@ def test_bench_env_pins_hashseed_and_pythonpath(tmp_path):
     (tmp_path / "src" / "pkg" / "__init__.py").write_text("")
     env = runner.bench_env(tmp_path, config.default(), base_env={"PATH": "/bin"})
     assert env["PYTHONHASHSEED"] == "0"
-    parts = env["PYTHONPATH"].split(":")
+    parts = env["PYTHONPATH"].split(os.pathsep)
     assert str(tmp_path) in parts
     assert str(tmp_path / "src") in parts
 
@@ -167,7 +177,7 @@ def test_bench_env_omits_hashseed_when_disabled(tmp_path):
 def test_bench_env_prepends_configured_pythonpath(tmp_path):
     cfg = config.default().__class__(pythonpath=("lib",))
     env = runner.bench_env(tmp_path, cfg, base_env={})
-    assert env["PYTHONPATH"].split(":")[0] == str(tmp_path / "lib")
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "lib")
 
 
 def test_compile_gate_fails_on_a_syntax_error(tmp_path):
@@ -402,3 +412,62 @@ def test_bench_env_strips_ambient_pytest_flags(tmp_path):
     assert "PYTEST_ADDOPTS" not in env
     assert "PYTEST_PLUGINS" not in env
     assert env["HOME"] == "/home/x"  # only the pytest knobs go
+
+
+class _FakeProc:
+    """Just enough subprocess.Popen for _kill_tree's non-POSIX branch."""
+
+    pid = 4242
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def kill(self) -> None:
+        self.events.append("kill")
+
+    def wait(self, timeout=None) -> int:
+        return 0
+
+
+class _FakeJob:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def terminate(self) -> None:
+        self.events.append("terminate job")
+
+
+def test_a_timeout_terminates_the_job_where_there_is_no_process_group(monkeypatch):
+    """Off POSIX there is no group to kill, and killing the direct child alone
+    leaves its grandchildren burning CPU. The job object holding the whole
+    tree is what replaces the group there."""
+    monkeypatch.setattr(runner, "_POSIX", False)
+    events: list[str] = []
+    runner._kill_tree(_FakeProc(events), _FakeJob(events))
+    assert events == ["terminate job"]
+
+
+def test_a_timeout_still_kills_the_child_when_no_job_could_be_created(monkeypatch):
+    """A job object is an API call that can fail. Degrading to the old
+    direct-child kill is worse but not nothing; crashing would abandon the
+    child entirely."""
+    monkeypatch.setattr(runner, "_POSIX", False)
+    events: list[str] = []
+    runner._kill_tree(_FakeProc(events), None)
+    assert events == ["kill"]
+
+
+def test_compile_exclude_does_not_swallow_a_windows_relative_path():
+    """The gate compiles "." and compileall reports what it walks with the
+    platform's own separator, so on Windows every file arrives as ".\\name.py".
+    A `\\.[^/]` dotfile branch matches that leading ".\\" — excluding the whole
+    tree, which is how a syntax error walked through a green compile gate on
+    Windows while the same code failed correctly on Linux.
+    """
+    pattern = runner._compile_exclude()
+    assert re.search(pattern, r".\bad.py") is None
+    assert re.search(pattern, "./bad.py") is None
+    # Still excludes what it is for, whichever separator the platform uses.
+    assert re.search(pattern, r".\.hidden.py") is not None
+    assert re.search(pattern, r"build\stale.py") is not None
+    assert re.search(pattern, "build/stale.py") is not None

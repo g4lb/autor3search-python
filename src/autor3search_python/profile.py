@@ -67,7 +67,11 @@ def _display_site(file: str, line: int, root: Path | None) -> str:
     display = file
     if root is not None:
         try:
-            display = str(Path(file).resolve().relative_to(root))
+            # One separator in the report, on every platform: `_elide` cuts on
+            # "/" when a site is too long, and a Windows-native "pkg\mod.py"
+            # has no such boundary to cut on — it would be truncated
+            # mid-component instead of at a directory.
+            display = Path(file).resolve().relative_to(root).as_posix()
         except ValueError:
             display = file
     return _elide(f"{display}:{line}", _SITE_WIDTH)

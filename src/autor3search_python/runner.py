@@ -1,10 +1,11 @@
-"""Executes subprocesses with a timeout, captured output and a process group.
+"""Executes subprocesses with a timeout, captured output and a killable tree.
 
-The process group matters more than it sounds. pytest runs its benchmark inside
-the same process, but plugins, xdist workers and the interpreter's own children
-are grandchildren of this harness; a round killed without cleaning up its group
+The tree matters more than it sounds. pytest runs its benchmark inside the same
+process, but plugins, xdist workers and the interpreter's own children are
+grandchildren of this harness; a round killed without cleaning up after it
 would leave one running, burning CPU and corrupting every later measurement on
-the machine.
+the machine. A process group carries that on POSIX and a job object carries it
+on Windows (see `winjob`); both are reached through `_kill_tree`.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from autor3search_python import discover
+from autor3search_python import discover, winjob
 
 if TYPE_CHECKING:
     from autor3search_python.config import Config
@@ -81,13 +82,20 @@ def _compile_exclude() -> str:
     experiment on a syntax error in a directory no one was measuring.
 
     compileall matches this with `search` against each path it walks. The extra
-    `[^/]` in the dotfile branch matters when a caller passes "." (this
+    `[^/\\]` in the dotfile branch matters when a caller passes "." (this
     module's own test does): compileall then reports files as "./bad.py", and a
     bare `(^|/)\\.` matches that leading "./" itself, excluding every file in
     the tree instead of just dotfiles and dotdirs.
+
+    Both separators, because compileall reports what it walks in the platform's
+    own form: on Windows that same call yields ".\\bad.py", where a `/`-only
+    character class reads the backslash as "any character but /" and excludes
+    the entire tree. That is not a cosmetic difference — the compile gate then
+    compiles nothing and passes, so a syntax error reached the pytest gate as a
+    collection error (FAIL) instead of failing here as a CRASH.
     """
     names = "|".join(re.escape(d) for d in sorted(discover.SKIP_DIRS))
-    return rf"(^|/)(\.[^/]|({names})(/|$))"
+    return rf"(^|[/\\])(\.[^/\\]|({names})([/\\]|$))"
 
 
 def validate_node_ids(node_ids: Sequence[str]) -> None:
@@ -172,8 +180,14 @@ class _BoundedReader(threading.Thread):
         return decoded + _TRUNCATED if self._truncated else decoded
 
 
-def _kill_group(proc: subprocess.Popen) -> None:
-    """Terminate the whole process group, then insist."""
+def _kill_tree(proc: subprocess.Popen, job: winjob.Job | None) -> None:
+    """Terminate the child and everything it started, then insist.
+
+    Two mechanisms for one guarantee: a process group on POSIX, a job object
+    on Windows. `job` is None only where one could not be created at all, and
+    then this degrades to killing the direct child — worse than the guarantee,
+    but better than abandoning the child along with its grandchildren.
+    """
     if _POSIX:
         try:
             pgid = os.getpgid(proc.pid)
@@ -189,10 +203,13 @@ def _kill_group(proc: subprocess.Popen) -> None:
                 return
             except subprocess.TimeoutExpired:
                 continue
-    else:  # pragma: no cover - exercised only on Windows
+        return
+    if job is not None:
+        job.terminate()
+    else:
         proc.kill()
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=_GRACE_SECONDS)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=_GRACE_SECONDS)
 
 
 class Runner:
@@ -226,6 +243,12 @@ class Runner:
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
         proc = subprocess.Popen(list(args), **popen_kwargs)
+        # Off POSIX the process group above is only a Ctrl-C routing detail,
+        # not something that can be killed as a unit; a job object is. It is
+        # taken here, immediately after the spawn, because subprocess offers
+        # no way to create a process directly into one (see winjob for the
+        # race that leaves).
+        job = None if _POSIX else winjob.assign(proc.pid)
         # Draining starts before wait(): if nothing reads either pipe while
         # the child fills the other one, both this process and the child
         # deadlock. Same reason `communicate()` uses threads internally —
@@ -237,22 +260,31 @@ class Runner:
         err_reader.start()
         timed_out = False
         try:
-            proc.wait(timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _kill_group(proc)
-            # Bounded: a grandchild that escapes the process group (by calling
-            # setsid itself) would otherwise block this call forever. An
-            # unattended overnight loop must return timed_out=True rather than
-            # hang — a wrong answer beats nobody noticing it never came back.
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=_GRACE_SECONDS)
-        # Bounded for the same reason as the wait() above: a pipe an escaped
-        # grandchild still holds open stays "readable" (blocked, not EOF)
-        # indefinitely, and the reader thread for it would otherwise never
-        # return. Whatever each thread has already captured is kept either way.
-        out_reader.join(timeout=_GRACE_SECONDS)
-        err_reader.join(timeout=_GRACE_SECONDS)
+            try:
+                proc.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _kill_tree(proc, job)
+                # Bounded: a grandchild that escapes the process group (by calling
+                # setsid itself) would otherwise block this call forever. An
+                # unattended overnight loop must return timed_out=True rather than
+                # hang — a wrong answer beats nobody noticing it never came back.
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=_GRACE_SECONDS)
+            # Bounded for the same reason as the wait() above: a pipe an escaped
+            # grandchild still holds open stays "readable" (blocked, not EOF)
+            # indefinitely, and the reader thread for it would otherwise never
+            # return. Whatever each thread has already captured is kept either way.
+            out_reader.join(timeout=_GRACE_SECONDS)
+            err_reader.join(timeout=_GRACE_SECONDS)
+        finally:
+            # Always: a loop that runs thousands of commands cannot leak a
+            # kernel handle per command. The close is also the last line of
+            # defence — kill-on-job-close ends anything the command left
+            # behind, which is a Windows-only strictness the POSIX side has no
+            # equivalent for outside a timeout.
+            if job is not None:  # pragma: no cover - Windows only
+                job.close()
         duration = time.monotonic() - start
         res = Result(
             args=tuple(args),

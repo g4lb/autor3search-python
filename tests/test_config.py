@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 
@@ -81,7 +82,10 @@ def test_a_benchmark_entry_with_an_internal_dash_is_not_rejected():
 
 
 def test_python_accepts_the_running_interpreter(tmp_path):
-    config.load(write(tmp_path, f'python = "{sys.executable}"\n'))  # must not raise
+    # json.dumps, not an f-string: a TOML basic string escapes backslashes the
+    # same way JSON does, and C:\Users\... interpolated raw is a parse error
+    # rather than a path.
+    config.load(write(tmp_path, f"python = {json.dumps(sys.executable)}\n"))  # must not raise
 
 
 def test_python_accepts_a_bare_name_resolvable_on_path(tmp_path):
