@@ -65,7 +65,9 @@ def test_program_md_forbids_every_file_the_scope_gate_rejects_outright():
     can only learn by burning an experiment on it.
     """
     text = templates.program_md()
+    # Startup hooks by STEM: the gate refuses every importable suffix, but
+    # program.md explains the class in prose rather than listing six filenames.
     for name in sorted(
-        pipeline.DEPENDENCY_FILES | pipeline.MEASUREMENT_CONFIG_FILES | pipeline.STARTUP_HOOK_FILES
+        pipeline.DEPENDENCY_FILES | pipeline.MEASUREMENT_CONFIG_FILES | pipeline.STARTUP_HOOK_STEMS
     ):
         assert name in text, f"{name} is rejected outright but program.md never says so"

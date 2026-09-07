@@ -213,3 +213,18 @@ def test_pytest_gate_resolves_modules_the_same_way_bench_does(tmp_path, monkeypa
     gate_args, bench_args = seen
     assert "--import-mode=importlib" in gate_args
     assert "--import-mode=importlib" in bench_args
+
+
+def test_bench_env_strips_ambient_pytest_flags(tmp_path):
+    """The agent is the process that invokes `eval`, so it owns this
+    environment. PYTEST_ADDOPTS is a pytest.ini it never has to write down:
+    `-k benchmark` there neuters the correctness gate that is deliberately not
+    switchable, and --benchmark-timer= swaps the clock."""
+    env = runner.bench_env(
+        tmp_path,
+        config.default(),
+        base_env={"PYTEST_ADDOPTS": "-k benchmark", "PYTEST_PLUGINS": "evil", "HOME": "/home/x"},
+    )
+    assert "PYTEST_ADDOPTS" not in env
+    assert "PYTEST_PLUGINS" not in env
+    assert env["HOME"] == "/home/x"  # only the pytest knobs go

@@ -259,6 +259,15 @@ def bench_env(
         env["PYTHONHASHSEED"] = str(cfg.hashseed)
     else:
         env.pop("PYTHONHASHSEED", None)
+    # Measurement must not inherit ambient pytest flags. The agent is the
+    # process that invokes `eval`, so it owns this environment, and
+    # PYTEST_ADDOPTS is a pytest.ini it never has to write down:
+    # `PYTEST_ADDOPTS='-k benchmark'` neuters the correctness gate that is
+    # deliberately not switchable, and `--benchmark-timer=` swaps the clock.
+    # PYTEST_PLUGINS goes for the same reason — it loads arbitrary modules into
+    # every gate and both bench sides.
+    for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS"):
+        env.pop(var, None)
     return env
 
 

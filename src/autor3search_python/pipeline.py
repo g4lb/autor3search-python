@@ -67,8 +67,8 @@ DEPENDENCY_GLOBS = ("requirements*.txt", "constraints*.txt")
 # pyproject.toml and setup.cfg are in discover.PYTEST_CONFIG_FILES too, but
 # they are caught as dependency files first and keep that more specific
 # message. The remainder is derived, never re-listed: the whole point of the
-# shared constant is that adding a fifth pytest config file to it closes this
-# gate too, with no second edit to remember.
+# shared constant is that adding a name pytest reads closes this gate too, with
+# no second edit to remember.
 MEASUREMENT_CONFIG_FILES = frozenset(discover.PYTEST_CONFIG_FILES) - DEPENDENCY_FILES
 
 # Rejected regardless of scope, and the reason is startup, not pytest.
@@ -81,7 +81,27 @@ MEASUREMENT_CONFIG_FILES = frozenset(discover.PYTEST_CONFIG_FILES) - DEPENDENCY_
 #
 # The fix is to reject the FILE, not the behaviour: -S or -P would also cut
 # site-packages resolution out from under pytest itself.
-STARTUP_HOOK_FILES = frozenset({"sitecustomize.py", "usercustomize.py"})
+#
+# Matched by STEM across every suffix the import system will load, not by
+# filename. A sourceless `sitecustomize.pyc` with no .py beside it imports
+# perfectly well — SourcelessFileLoader exists for exactly that — so listing
+# only the .py names closed this by name while leaving the class open. (.pyo is
+# inert on Python 3, whose BYTECODE_SUFFIXES is ['.pyc'], but it costs nothing
+# to refuse.)
+STARTUP_HOOK_STEMS = frozenset({"sitecustomize", "usercustomize"})
+_IMPORTABLE_SUFFIXES = (".py", ".pyc", ".pyo")
+STARTUP_HOOK_FILES = frozenset(
+    f"{stem}{suffix}" for stem in STARTUP_HOOK_STEMS for suffix in _IMPORTABLE_SUFFIXES
+)
+
+# Rejected on sight if they are present in the working tree at all, whatever
+# git has been told about them. Every other gate here reads a git diff, and
+# `gitx.changed_since` passes --exclude-standard, so a `.gitignore` the agent
+# commits makes any untracked file invisible to all of them — while the
+# interpreter still reads it. .gitignore is itself an in-scope root file, so
+# that is one commit away. Statting the worktree is the only source of truth
+# that a gitignore entry cannot rewrite.
+FORBIDDEN_ROOT_FILES = MEASUREMENT_CONFIG_FILES | STARTUP_HOOK_FILES
 
 
 def is_dependency_file(rel: str) -> bool:
@@ -100,8 +120,13 @@ def is_measurement_config_file(rel: str) -> bool:
 
 def is_startup_hook_file(rel: str) -> bool:
     """Only at the repository root: `site` imports these by top-level module
-    name, so only the copy on the sys.path entry bench_env adds can run."""
-    return "/" not in rel and rel in STARTUP_HOOK_FILES
+    name, so only the copy on the sys.path entry bench_env adds can run.
+
+    By stem, across every importable suffix — `sitecustomize.pyc` with no
+    source beside it runs just as happily as `sitecustomize.py`.
+    """
+    p = PurePosixPath(rel)
+    return "/" not in rel and p.stem in STARTUP_HOOK_STEMS and p.suffix in _IMPORTABLE_SUFFIXES
 
 
 def is_bytecode(rel: str) -> bool:
@@ -112,13 +137,39 @@ def is_bytecode(rel: str) -> bool:
     from the second eval onward — untracked `__pycache__/*.pyc` that the agent
     never wrote and cannot remove often enough to matter.
 
-    Skipping these hides nothing: a `.pyc` beside its source is invalidated by
-    CPython against the source's mtime and size, and one under `__pycache__`
-    with no source is not importable at all, because sourceless imports must
-    sit at the source's own location.
+    This skip is NOT safe on its own, and the ordering in `evaluate` is part of
+    the fix rather than incidental. Two of the three cases really do hide
+    nothing: a `.pyc` beside its source is invalidated by CPython against the
+    source's mtime and size, and one under `__pycache__` with no source is not
+    importable, because sourceless imports must sit at the source's own
+    location. The third case is the exception — a sourceless `.pyc` sitting
+    directly on a sys.path entry IS importable, and `sitecustomize.pyc` is
+    then executed at interpreter startup. So every rejection that can match a
+    bytecode path must be checked BEFORE this skip, never after it.
     """
     p = PurePosixPath(rel)
     return "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo")
+
+
+def present_forbidden_root_files(root: str | Path, baseline_commit: str) -> list[str]:
+    """Forbidden root files that exist on disk and did not exist at baseline.
+
+    Filesystem-sourced on purpose. Everything else in the scope gate reads
+    `gitx.changed_since`, which passes --exclude-standard, so one committed
+    `.gitignore` line makes an untracked file invisible to every git-based
+    check while the interpreter goes on reading it.
+
+    A file that WAS at baseline is left to the diff-based checks: it is tracked,
+    so `git diff` reports any edit to it regardless of gitignore, and a repo
+    that legitimately shipped a `pytest.ini` before the run started must not
+    fail every experiment for owning one.
+    """
+    root = Path(root)
+    return sorted(
+        name
+        for name in FORBIDDEN_ROOT_FILES
+        if (root / name).exists() and not gitx.path_in_tree(root, baseline_commit, name)
+    )
 
 
 def sha256_file(path: str | Path) -> str:
@@ -168,8 +219,10 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
     changed = gitx.changed_since(root, base.commit)
     matcher = scope.Matcher(cfg.scope)
     for rel in changed:
-        if is_bytecode(rel):
-            continue  # the harness's own leavings, not the agent's edit
+        # Every rejection that can match a bytecode path comes BEFORE the
+        # bytecode skip. `sitecustomize.pyc` is both a startup hook and a .pyc,
+        # and skipping it first waved it straight through — closing a hole by
+        # name and reopening it by extension.
         if is_dependency_file(rel):
             return (
                 verdict.gate(
@@ -202,6 +255,8 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
                 ),
                 None,
             )
+        if is_bytecode(rel):
+            continue  # the harness's own leavings, not the agent's edit
         if rel in (results.PATH, RUN_LOG_NAME, config.CONFIG_PATH):
             continue  # harness output, plus the human-owned config (checked below)
         if discover.is_test_file(rel):
@@ -215,6 +270,29 @@ def evaluate(opts: Options) -> tuple[verdict.Result, Measurements | None]:
                 ),
                 None,
             )
+
+    # 1a. The same forbidden root files again, this time by statting the
+    #     working tree instead of reading a git diff.
+    #
+    #     Not redundant: `gitx.changed_since` passes --exclude-standard, and
+    #     `.gitignore` is an ordinary in-scope root file. One committed line
+    #     naming `pytest.ini` makes an untracked `pytest.ini` invisible to
+    #     every check above, while pytest goes on reading it — the diff is
+    #     simply the wrong source of truth for "is this file here". The loop
+    #     above still runs first, because for a tracked file it says whether
+    #     the file was EDITED, which is the more precise complaint.
+    for name in present_forbidden_root_files(root, base.commit):
+        return (
+            verdict.gate(
+                verdict.Status.FAIL,
+                verdict.Reason.SCOPE,
+                f"{name} is present in the working tree and was not there at baseline. "
+                f"It is refused on sight, whatever git has been told about it: a "
+                f".gitignore entry hides a file from every git-based check but not from "
+                f"the interpreter, which reads it either way. Delete it.",
+            ),
+            None,
+        )
 
     # 1b. Config integrity. config.toml lives in the repo because humans own it,
     #     which means the agent can reach it. Raising max_regress_pct or

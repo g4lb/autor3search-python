@@ -78,3 +78,18 @@ def test_worktree_lifecycle(git_repo, tmp_path):
 def test_git_error_includes_stderr(git_repo):
     with pytest.raises(gitx.GitError, match="unknown-ref"):
         gitx.checkout(git_repo, "unknown-ref")
+
+
+def test_path_in_tree_reads_the_commit_not_the_worktree(git_repo):
+    """The gate that stats the working tree needs an answer git cannot be
+    talked out of by .gitignore or by staging."""
+    assert gitx.path_in_tree(git_repo, "HEAD", "README.md") is True
+    assert gitx.path_in_tree(git_repo, "HEAD", "pytest.ini") is False
+    # Neither the working tree, nor .gitignore, nor the INDEX may change the
+    # answer: an agent that stages a file has not put it in any commit, and a
+    # check reading the index instead of the tree would say it had.
+    (git_repo / "pytest.ini").write_text("[pytest]\n")
+    (git_repo / ".gitignore").write_text("pytest.ini\n")
+    assert gitx.path_in_tree(git_repo, "HEAD", "pytest.ini") is False
+    git(git_repo, "add", "-f", "pytest.ini")
+    assert gitx.path_in_tree(git_repo, "HEAD", "pytest.ini") is False

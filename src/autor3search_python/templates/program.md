@@ -59,20 +59,30 @@ What you MUST NOT do:
   `scope` says. Changing a dependency is a supply-chain decision a human
   makes, not something an unattended loop decides, and a swapped dependency
   can change *what* is measured, not just how fast it runs.
-- Edit `pytest.ini`, `tox.ini`, `sitecustomize.py` or `usercustomize.py` at
-  the repository root, ever. Like `setup.cfg` and `pyproject.toml` beside
-  them, these are rejected outright regardless of `scope`, and for the same
-  underlying reason as `conftest.py`: they change *what is measured*, not how
-  fast the code is. pytest reads its own configuration from `pytest.ini` and
-  `tox.ini`, so one `addopts` line changes what gets collected, how it runs
-  and how it is timed — swapping the benchmark timer, or `-k`-ing the
-  correctness gate down to nothing. `sitecustomize.py` and `usercustomize.py`
-  are worse: Python imports them automatically at interpreter startup for
+- Add or edit any file pytest reads its configuration from, at the repository
+  root: `pytest.toml`, `.pytest.toml`, `pytest.ini`, `.pytest.ini`, `tox.ini`
+  — and `pyproject.toml` and `setup.cfg`, which are already forbidden above as
+  dependency files. These are rejected outright regardless of `scope`, for the
+  same underlying reason as `conftest.py`: they change *what is measured*, not
+  how fast the code is. One `addopts` line changes what pytest collects, how
+  it runs and how it is timed — swapping the benchmark timer, or `-k`-ing the
+  correctness gate down to nothing. If your change needs different pytest
+  settings to be worth measuring, that is a conversation with the human for
+  the next `baseline`, not something to route around mid-run.
+- Add `sitecustomize` or `usercustomize` at the repository root, in any form
+  — `.py`, or a compiled `.pyc` with no source beside it, which imports just
+  as well. Python imports these automatically at interpreter startup for
   anything on `sys.path`, and the harness has to put the tree root there, so
-  they run arbitrary code inside every gate and every measured process before
-  any of them begin. If your change needs different pytest settings to be
-  worth measuring, that is a conversation with the human for the next
-  `baseline`, not something to route around mid-run.
+  such a file runs arbitrary code inside every gate and every measured process
+  before any of them begin.
+- Reach for `PYTEST_ADDOPTS` or `PYTEST_PLUGINS` in the environment you run
+  `eval` from. Both are stripped before any gate or measurement starts, so
+  they will not do what you want; they are named here so you do not waste an
+  experiment discovering that.
+- Assume a `.gitignore` entry makes a file invisible to the harness. The
+  forbidden root files above are checked by looking at the working tree, not
+  by reading a git diff, so gitignoring one changes nothing except how long it
+  takes you to find out.
 - Edit `.autor3search/config.toml`. It is not covered by the scope gate — the
   gate explicitly skips it rather than matching it against `scope` like an
   ordinary source file. Instead, its hash is recorded at `baseline` time; if

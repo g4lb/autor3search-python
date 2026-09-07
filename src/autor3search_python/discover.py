@@ -18,14 +18,27 @@ SKIP_DIRS = frozenset({".git", "__pycache__", ".venv", "venv", "node_modules", "
 TEST_FILE_GLOBS = ("test_*.py", "*_test.py")
 CONFTEST = "conftest.py"
 
-# Every file pytest reads its own configuration from, at the rootdir. ONE list,
-# because two modules need it for two different reasons and they must never
-# drift apart: doctor scans them for coverage in addopts, and the scope gate
-# rejects edits to them. They diverged once — doctor knew all four while the
-# gate knew two — and the two the gate did not know (pytest.ini, tox.ini) were
-# a working route to a fabricated 90% "improvement": an addopts line can swap
-# the benchmark timer, or -k its way past the correctness gate.
-PYTEST_CONFIG_FILES = ("pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini")
+# Every file pytest reads its own configuration from, at the rootdir, in
+# pytest's own `locate_config` search order. ONE list, because two modules need
+# it for two different reasons and they must never drift apart: doctor scans
+# them for coverage in addopts, and the scope gate rejects edits to them.
+#
+# It has now been wrong twice, the same way both times — a name pytest reads
+# that we did not list is a working route to a fabricated 90% "improvement",
+# because an addopts line can swap the benchmark timer or -k its way past the
+# correctness gate. First doctor knew four names and the gate knew two; then
+# both knew four and pytest read seven. Check this against pytest's own
+# `locate_config` when upgrading pytest, and add the name here — both consumers
+# pick it up with no second edit.
+PYTEST_CONFIG_FILES = (
+    "pytest.toml",
+    ".pytest.toml",
+    "pytest.ini",
+    ".pytest.ini",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+)
 
 BENCHMARK_FIXTURE = "benchmark"
 BENCHMARK_MARK = "benchmark"

@@ -183,7 +183,9 @@ def wide_scope(opts):
     return opts
 
 
-@pytest.mark.parametrize("name", ["pytest.ini", "tox.ini"])
+@pytest.mark.parametrize(
+    "name", ["pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "tox.ini"]
+)
 def test_pytest_config_files_are_rejected_regardless_of_scope(run, monkeypatch, name):
     """pytest reads these, so an addopts line changes what is collected, how it
     runs and how it is timed — not how fast the code is.
@@ -254,6 +256,84 @@ def test_startup_hook_files_are_rejected_regardless_of_scope(run, monkeypatch, n
     assert result.reason is verdict.Reason.SCOPE
     assert name in result.message
     assert "startup" in result.message
+
+
+def test_a_sourceless_startup_hook_is_rejected_like_its_source(run, monkeypatch):
+    """`sitecustomize.pyc` with no .py beside it imports and runs — that is what
+    SourcelessFileLoader is for.
+
+    This is a regression test in the strict sense. The bytecode skip added for
+    the stray-__pycache__ fix ran first and waved the file through, and the
+    `*.py[cod]` gitignore entry added at the same time meant changed_since
+    never reported it either: a hole closed by name, reopened by extension.
+    """
+    repo, _, _ = run
+    (repo / "sitecustomize.pyc").write_bytes(b"\x00compiled\x00")
+    commit_all(repo, "a compiled startup hook")
+    result, _ = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "sitecustomize.pyc" in result.message
+
+
+def test_editing_a_startup_hook_that_was_there_at_baseline_is_still_rejected(run, monkeypatch):
+    """Pins the ORDER of the checks, not just their presence.
+
+    The working-tree check skips a file that was present at baseline, on
+    purpose — so for this case the diff loop is the only thing standing there,
+    and it only works because every rejection is tested before the bytecode
+    skip. Move `is_bytecode` back to the front of the loop and this experiment
+    sails through to measurement with a live startup hook in the tree.
+    """
+    repo, sd, base = run
+    (repo / "sitecustomize.pyc").write_bytes(b"\x00original\x00")
+    head = commit_all(repo, "a hook that predates the run")
+    base.commit = base.measure_commit = head
+    gitx.checkout_detached(sd / state.WORKTREE_NAME, head)
+
+    (repo / "sitecustomize.pyc").write_bytes(b"\x00rewritten by the agent\x00")
+    commit_all(repo, "rewrite it")
+    result, _ = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "sitecustomize.pyc" in result.message
+
+
+def test_a_gitignored_forbidden_file_is_still_rejected(run, monkeypatch):
+    """.gitignore is an ordinary in-scope root file, and every other gate here
+    reads a git diff that honours it.
+
+    One committed line makes an untracked pytest.ini invisible to
+    changed_since — which passes --exclude-standard — while pytest goes on
+    reading it. The working tree, not the diff, is the source of truth for
+    "is this file here".
+    """
+    repo, _, _ = run
+    (repo / ".gitignore").write_text("pytest.ini\n")
+    commit_all(repo, "ignore it")
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = --benchmark-timer=faketimer.t\n")
+
+    assert "pytest.ini" not in gitx.changed_since(repo, git(repo, "rev-parse", "HEAD"))
+
+    result, m = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.FAIL
+    assert result.reason is verdict.Reason.SCOPE
+    assert "pytest.ini" in result.message
+    assert m is None
+
+
+def test_a_forbidden_file_present_at_baseline_does_not_fail_every_experiment(run, monkeypatch):
+    """A repo that legitimately shipped a tox.ini before the run started must
+    still be usable. Untouched, it is not the agent's doing; the diff-based
+    check above covers it the moment it IS edited."""
+    repo, sd, base = run
+    (repo / "tox.ini").write_text("[tox]\n")
+    head = commit_all(repo, "a pre-existing tox.ini")
+    base.commit = base.measure_commit = head
+    gitx.checkout_detached(sd / state.WORKTREE_NAME, head)
+    result, _ = pipeline.evaluate(wide_scope(options(run, monkeypatch)))
+    assert result.status is verdict.Status.DISCARD
+    assert result.reason is verdict.Reason.NO_IMPROVEMENT
 
 
 def test_stray_bytecode_does_not_trip_a_narrow_scope_gate(run, monkeypatch):
