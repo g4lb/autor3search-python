@@ -78,6 +78,21 @@ def is_clean(d: str | Path) -> bool:
     return _git(d, "status", "--porcelain") == ""
 
 
+def path_in_tree(d: str | Path, commit: str, path: str) -> bool:
+    """True when `path` existed at `commit`.
+
+    Asks the commit's tree directly rather than the index or the working tree,
+    so the answer cannot be changed by staging, by .gitignore, or by anything
+    else the agent controls — which is the whole reason a caller reaches for
+    this instead of a diff.
+    """
+    try:
+        _git(d, "cat-file", "-e", f"{commit}:{path}")
+    except GitError:
+        return False
+    return True
+
+
 def changed_since(d: str | Path, commit: str) -> list[str]:
     """Repo-relative paths modified since `commit`, including untracked files.
 
