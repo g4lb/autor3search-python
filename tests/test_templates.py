@@ -3,7 +3,11 @@ import re
 
 from autor3search_python import pipeline, templates, verdict
 
-GO_ARTIFACTS = (
+# Names that do not exist in this project: files it never writes, a config
+# format it does not read, metrics it does not report. Naming one in the
+# agent-facing template or the README sends the reader after something that
+# is not there.
+ABSENT_NAMES = (
     "autor3search-go",
     "go.mod",
     "go.sum",
@@ -13,6 +17,9 @@ GO_ARTIFACTS = (
     "allocs_delta",
     "go test",
 )
+
+# Prose that would explain this project as a port rather than on its own terms.
+PORT_FRAMING = ("Go original", "Go sibling", "Go harness", "Python port")
 
 
 def test_program_md_exit_code_table_agrees_with_verdict():
@@ -44,18 +51,18 @@ def test_program_md_documents_every_exit_code():
         assert token in text
 
 
-def test_program_md_names_no_go_artifacts():
-    """A stale Go reference would send the agent looking for a file that is not there."""
+def test_program_md_names_nothing_absent():
+    """A name for a file that is not there sends the agent looking for it."""
     text = templates.program_md()
-    for stale in GO_ARTIFACTS:
-        assert stale not in text
+    for absent in ABSENT_NAMES:
+        assert absent not in text
 
 
-def test_readme_names_no_go_artifacts():
+def test_readme_names_nothing_absent():
     """The README stands on its own; it does not explain this project as a port."""
     text = (pathlib.Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
-    for stale in GO_ARTIFACTS + ("Go original", "Go sibling", "Go harness", "Python port"):
-        assert stale not in text
+    for absent in ABSENT_NAMES + PORT_FRAMING:
+        assert absent not in text
 
 
 def test_program_md_forbids_editing_conftest():
