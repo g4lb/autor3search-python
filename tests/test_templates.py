@@ -3,7 +3,6 @@ import re
 
 from autor3search_python import pipeline, templates, verdict
 
-
 GO_ARTIFACTS = (
     "autor3search-go",
     "go.mod",
