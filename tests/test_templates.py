@@ -65,6 +65,15 @@ def test_readme_names_nothing_absent():
         assert absent not in text
 
 
+def test_shipped_source_names_nothing_absent():
+    """Error messages and docstrings reach users too, so they get the same guard."""
+    src = pathlib.Path(__file__).parent.parent / "src"
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for absent in ABSENT_NAMES + PORT_FRAMING:
+            assert absent not in text, f"{path.relative_to(src)} names {absent!r}"
+
+
 def test_program_md_forbids_editing_conftest():
     assert "conftest.py" in templates.program_md()
 

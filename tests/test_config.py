@@ -130,7 +130,7 @@ def test_parse_duration_rejects(text):
 
 
 def test_benchtime_rejects_the_iteration_count_form(tmp_path):
-    """go test's `100x` form is a real flag value someone may copy across; say why not."""
+    """`100x` is a plausible thing to type for a benchtime; say why it is refused."""
     with pytest.raises(config.ConfigError, match="fixed-iteration"):
         config.load(write(tmp_path, 'benchtime = "100x"\n'))
 
