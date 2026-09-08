@@ -309,7 +309,7 @@ class Runner:
         return self.run(self.python, *args)
 
     def compile_gate(self, paths: Sequence[str]) -> Result:
-        """The syntax gate. `go build`'s role: is this even valid code?"""
+        """The syntax gate: is this even valid code, before anything runs it?"""
         return self.python_run("-m", "compileall", "-q", "-x", _compile_exclude(), *paths)
 
     def import_gate(self, modules: Sequence[str]) -> Result:

@@ -72,10 +72,9 @@ def test_full_run(demo_repo):
     # times the largest no-op delta observed, and well clear of the KEEP step
     # below, which turns a quadratic per-character concatenation into a single
     # join and measures -25.8% (score 0.7418) on the machine this was written
-    # on. The Go original raises the same floor for the same reason; it uses
-    # 15%, against a fixture whose true effect is an order of magnitude rather
-    # than this one's quarter, so the ratio here is the thing being matched,
-    # not the number.
+    # on. What matters is that ratio — the floor sitting well inside the gap
+    # between the two effects — not the absolute number, so a fixture with a
+    # different true effect would want a different floor.
     raised = cfg_path.read_text().replace("min_effect_pct = 1.0", "min_effect_pct = 10.0")
     assert "min_effect_pct = 10.0" in raised, "init's config no longer has the key this rewrites"
     cfg_path.write_text(raised)

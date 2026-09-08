@@ -43,8 +43,8 @@ def test_timeout_is_reported_not_raised(tmp_path):
 
 
 def test_timeout_kills_grandchildren(tmp_path):
-    """go test runs its benchmark as a grandchild; pytest does too. A survivor
-    burns CPU and corrupts every later measurement on the machine."""
+    """pytest runs its benchmark as a grandchild. A survivor burns CPU and
+    corrupts every later measurement on the machine."""
     marker = tmp_path / "alive.txt"
     # marker.as_posix(): a Windows path interpolated raw would put "\\U" of
     # C:\\Users into the inner script's own non-raw string literal, and the

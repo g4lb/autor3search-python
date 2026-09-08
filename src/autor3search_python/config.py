@@ -174,7 +174,7 @@ def validate(cfg: Config) -> None:
         raise ConfigError(f"gc must be one of {list(ALLOWED_GC)}, got {cfg.gc!r}")
     if _ITERATION_COUNT_FORM.match(str(cfg.benchtime)):
         raise ConfigError(
-            f"benchtime {cfg.benchtime!r} uses go test's fixed-iteration-count form (Nx), "
+            f"benchtime {cfg.benchtime!r} uses the fixed-iteration-count form (Nx), "
             f"which is deliberately unsupported: a fixed count makes rounds incomparable, "
             f"because a candidate that is twice as fast finishes in half the wall time and "
             f"is therefore measured under different thermal conditions — exactly what the "

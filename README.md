@@ -12,26 +12,23 @@ wake up to a branch of accepted commits and a log of every experiment,
 including the failures.
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
-This is a Python port of [g4lb/autor3search-go](https://github.com/g4lb/autor3search-go),
-its Go sibling — same design, same guarantees, a different metric source: where
-the Go harness reads `ns/op` out of `go test -bench`, this one reads per-round
-timings out of [pytest-benchmark](https://pytest-benchmark.readthedocs.io/).
+The metric source is [pytest-benchmark](https://pytest-benchmark.readthedocs.io/):
+the harness reads per-round timings out of its JSON output.
 
 > **Status: early but working.** Validated against one real library —
 > [`humanize`](https://github.com/python-humanize/humanize) — where it found and
 > kept a genuine 5.81% win across its 15 benchmarks (hoisting a per-call
 > `import math` out of nine function bodies; `clamp` −23.2%, `apnumber` −14.9%,
-> no regressions). That is one library, not the three the Go original was
-> exercised against, so treat this as a tool that inherited a validated design
-> and has begun earning its own record rather than one that already has it.
+> no regressions). That is one library, so treat this as a tool that has begun
+> earning its record rather than one that already has it.
 >
 > Every number in this README is a real measurement taken on the machine that
 > wrote it, never an illustration. Where a number would have been guessed, there
 > is no number.
 >
 > The decision procedure — the scoring rules, the Bonferroni correction, the
-> asymmetric regression guard, the four exit codes — is carried over unchanged
-> from the Go original. If you run this against your own project, the harness's
+> asymmetric regression guard, the four exit codes — is fixed, not tuned per
+> project. If you run this against your own project, the harness's
 > `results.tsv` and `report` output are the honest record of what it actually did
 > there; that is rather the point of the whole design.
 
@@ -391,10 +388,9 @@ abandoned. Plain `stop` is unaffected and behaves identically everywhere.
 you about less. One residual race is real: a grandchild started in the
 microseconds between spawning a benchmark subprocess and putting it in its job
 object is outside that job and would survive a timeout kill. Windows offers no
-way to create a process directly into a job through `subprocess`, and the Go
-original has the same window.
+way to create a process directly into a job through `subprocess`.
 
-Ported from the Go original:
+Accepted limits of the design:
 
 - No attempt to make the harness tamper-proof against a same-user attacker.
   The worktree-integrity check catches accidental clobbering and careless
