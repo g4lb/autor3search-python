@@ -1,6 +1,19 @@
+import pathlib
 import re
 
 from autor3search_python import pipeline, templates, verdict
+
+
+GO_ARTIFACTS = (
+    "autor3search-go",
+    "go.mod",
+    "go.sum",
+    "_test.go",
+    "config.yaml",
+    "ns/op",
+    "allocs_delta",
+    "go test",
+)
 
 
 def test_program_md_exit_code_table_agrees_with_verdict():
@@ -35,16 +48,14 @@ def test_program_md_documents_every_exit_code():
 def test_program_md_names_no_go_artifacts():
     """A stale Go reference would send the agent looking for a file that is not there."""
     text = templates.program_md()
-    for stale in (
-        "autor3search-go",
-        "go.mod",
-        "go.sum",
-        "_test.go",
-        "config.yaml",
-        "ns/op",
-        "allocs_delta",
-        "go test",
-    ):
+    for stale in GO_ARTIFACTS:
+        assert stale not in text
+
+
+def test_readme_names_no_go_artifacts():
+    """The README stands on its own; it does not explain this project as a port."""
+    text = (pathlib.Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    for stale in GO_ARTIFACTS + ("Go original", "Go sibling", "Go harness", "Python port"):
         assert stale not in text
 
 

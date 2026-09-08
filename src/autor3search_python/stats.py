@@ -1,9 +1,9 @@
 """The statistics behind a verdict.
 
-The Go original gets these from golang.org/x/perf/benchmath. Implementing them
-here keeps the harness free of a scipy dependency, and — more usefully — keeps
-the exact small-sample behavior under this project's own tests, since small
-samples are the entire operating regime (`count` defaults to 10 per side).
+These are implemented here rather than taken from scipy: it keeps the harness
+dependency-free, and — more usefully — keeps the exact small-sample behavior
+under this project's own tests, since small samples are the entire operating
+regime (`count` defaults to 10 per side).
 """
 
 from __future__ import annotations
