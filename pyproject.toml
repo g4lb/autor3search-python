@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autor3search-python"
-version = "0.3.1"
+version = "0.3.2"
 description = "Autonomous AI-driven performance optimization for any Python repository"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -20,6 +20,12 @@ classifiers = [
   "Operating System :: MacOS :: MacOS X",
   "Operating System :: Microsoft :: Windows",
 ]
+
+[project.urls]
+Homepage = "https://github.com/g4lb/autor3search-python"
+Source = "https://github.com/g4lb/autor3search-python"
+Issues = "https://github.com/g4lb/autor3search-python/issues"
+Changelog = "https://github.com/g4lb/autor3search-python/releases"
 
 [project.scripts]
 autor3search-python = "autor3search_python.cli.main:main"
