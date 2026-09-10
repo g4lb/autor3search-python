@@ -22,10 +22,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/g4lb/autor3search-python"
-Source = "https://github.com/g4lb/autor3search-python"
-Issues = "https://github.com/g4lb/autor3search-python/issues"
-Changelog = "https://github.com/g4lb/autor3search-python/releases"
+Homepage = "https://github.com/autor3search/python"
+Source = "https://github.com/autor3search/python"
+Issues = "https://github.com/autor3search/python/issues"
+Changelog = "https://github.com/autor3search/python/releases"
 
 [project.scripts]
 autor3search-python = "autor3search_python.cli.main:main"

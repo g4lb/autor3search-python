@@ -5,7 +5,7 @@ name: release
 # workflow file, so no API token exists to store, leak or rotate.
 #
 # One-time setup on PyPI (project → Publishing → Add a new publisher):
-#   Owner: g4lb   Repository: autor3search-python
+#   Owner: autor3search   Repository: python
 #   Workflow: release.yml   Environment: (leave blank)
 #
 # To release: bump `version` in pyproject.toml, commit, then

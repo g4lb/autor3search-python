@@ -1,7 +1,7 @@
 # autor3search-python
 
 [![PyPI](https://img.shields.io/pypi/v/autor3search-python?label=pypi)](https://pypi.org/project/autor3search-python/)
-[![ci](https://github.com/g4lb/autor3search-python/actions/workflows/ci.yml/badge.svg)](https://github.com/g4lb/autor3search-python/actions/workflows/ci.yml)
+[![ci](https://github.com/autor3search/python/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/python/actions/workflows/ci.yml)
 
 **Autonomous AI-driven performance optimization for any Python repository.**
 
