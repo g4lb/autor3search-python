@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from autor3search_python import freeze
+from autor3search import freeze
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from autor3search_python import stats
+from autor3search import stats
 
 DEFAULT_ALPHA = 0.05
 

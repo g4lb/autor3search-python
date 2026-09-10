@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from autor3search_python import benchio, pipeline, results, runstop, state, verdict
-from autor3search_python.cli import eval as cli_eval
-from autor3search_python.cli import main as cli_main
+from autor3search import benchio, pipeline, results, runstop, state, verdict
+from autor3search.cli import eval as cli_eval
+from autor3search.cli import main as cli_main
 from tests.conftest import git
 
 

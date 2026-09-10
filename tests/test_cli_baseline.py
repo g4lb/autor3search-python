@@ -1,7 +1,7 @@
 import pytest
 
-from autor3search_python import freeze, gitx, state
-from autor3search_python.cli import main as cli_main
+from autor3search import freeze, gitx, state
+from autor3search.cli import main as cli_main
 from tests.conftest import git
 
 
@@ -65,7 +65,7 @@ def test_baseline_refuses_without_a_config(git_repo, capsys):
 def test_a_failed_baseline_leaves_no_branch_behind(ready, monkeypatch, capsys):
     """A retry under the same name must not be permanently blocked."""
     monkeypatch.setattr(
-        "autor3search_python.gitx.add_worktree",
+        "autor3search.gitx.add_worktree",
         lambda *a, **k: (_ for _ in ()).throw(gitx.GitError("worktree failed")),
     )
     assert cli_main.main(["baseline", "-C", str(ready), "-tag", "t1"]) != 0
@@ -81,7 +81,7 @@ def test_a_failed_baseline_unregisters_the_worktree_and_allows_retry(ready, monk
     def _raise(self, path):
         raise OSError("disk full")
 
-    monkeypatch.setattr("autor3search_python.state.Baseline.save", _raise)
+    monkeypatch.setattr("autor3search.state.Baseline.save", _raise)
     assert cli_main.main(["baseline", "-C", str(ready), "-tag", "t1"]) != 0
 
     listing = git(ready, "worktree", "list")

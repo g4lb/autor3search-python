@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "autor3search-python"
-version = "0.3.2"
+name = "autor3search"
+version = "0.4.0"
 description = "Autonomous AI-driven performance optimization for any Python repository"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -28,13 +28,13 @@ Issues = "https://github.com/autor3search/python/issues"
 Changelog = "https://github.com/autor3search/python/releases"
 
 [project.scripts]
-autor3search-python = "autor3search_python.cli.main:main"
+autor3search-python = "autor3search.cli.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-benchmark>=4", "ruff>=0.6"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/autor3search_python"]
+packages = ["src/autor3search"]
 
 [tool.ruff]
 line-length = 100

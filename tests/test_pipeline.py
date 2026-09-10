@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from autor3search_python import (
+from autor3search import (
     benchio,
     config,
     discover,
@@ -81,8 +81,8 @@ def options(run, monkeypatch, measure_fn=None, skip_gates=True):
     if skip_gates:
         cfg = config.Config(**{**cfg.__dict__, "gates": config.Gates(False, False)})
         monkeypatch.setattr(
-            "autor3search_python.runner.Runner.pytest_gate",
-            lambda self: __import__("autor3search_python.runner", fromlist=["Result"]).Result(
+            "autor3search.runner.Runner.pytest_gate",
+            lambda self: __import__("autor3search.runner", fromlist=["Result"]).Result(
                 (), "", "", 0, False, 0.0
             ),
         )
@@ -561,7 +561,7 @@ def test_a_frozen_file_rewritten_during_the_gates_fails_before_measurement(run, 
         (repo / "tests" / "conftest.py").write_text("# rewritten mid-gate\n")
         return runner.Result((), "", "", 0, False, 0.0)
 
-    monkeypatch.setattr("autor3search_python.runner.Runner.pytest_gate", rogue_pytest_gate)
+    monkeypatch.setattr("autor3search.runner.Runner.pytest_gate", rogue_pytest_gate)
     result, measurements = pipeline.evaluate(opts)
     assert result.status is verdict.Status.FAIL
     assert result.reason is verdict.Reason.FREEZE_DRIFT
@@ -576,7 +576,7 @@ def test_a_moved_baseline_worktree_is_detected(run, monkeypatch):
     """Editing the baseline to make it slow would make every candidate 'improve'."""
     repo, sd, base = run
     monkeypatch.setattr(
-        "autor3search_python.gitx.head_commit",
+        "autor3search.gitx.head_commit",
         lambda d: "deadbee" if str(d).endswith(state.WORKTREE_NAME) else base.commit,
     )
     opts = pipeline.Options(
@@ -592,8 +592,8 @@ def test_a_moved_baseline_worktree_is_detected(run, monkeypatch):
         measure_fn=fake_measure(),
     )
     monkeypatch.setattr(
-        "autor3search_python.runner.Runner.pytest_gate",
-        lambda self: __import__("autor3search_python.runner", fromlist=["Result"]).Result(
+        "autor3search.runner.Runner.pytest_gate",
+        lambda self: __import__("autor3search.runner", fromlist=["Result"]).Result(
             (), "", "", 0, False, 0.0
         ),
     )
@@ -634,8 +634,8 @@ def test_a_failing_test_fails_the_experiment(run, monkeypatch):
     commit_all(repo, "break behavior")
     opts = options(run, monkeypatch, skip_gates=True)
     monkeypatch.setattr(
-        "autor3search_python.runner.Runner.pytest_gate",
-        lambda self: __import__("autor3search_python.runner", fromlist=["Result"]).Result(
+        "autor3search.runner.Runner.pytest_gate",
+        lambda self: __import__("autor3search.runner", fromlist=["Result"]).Result(
             (), "", "assert 0 == 4950", 1, False, 0.1
         ),
     )
@@ -666,7 +666,7 @@ def test_keep_advances_the_measurement_commit(run, monkeypatch, tmp_path):
     new_head = commit_all(repo, "faster")
     moved = []
     monkeypatch.setattr(
-        "autor3search_python.gitx.checkout_detached",
+        "autor3search.gitx.checkout_detached",
         lambda d, c: moved.append((str(d), c)),
     )
     opts = options(run, monkeypatch, measure_fn=fake_measure(2.0, 1.0, n=8))
@@ -685,7 +685,7 @@ def test_discard_does_not_advance_the_measurement_commit(run, monkeypatch):
 
 def test_a_measurement_failure_is_a_crash_not_an_exception(run, monkeypatch):
     def boom(_opts):
-        raise __import__("autor3search_python.measure", fromlist=["MeasureError"]).MeasureError(
+        raise __import__("autor3search.measure", fromlist=["MeasureError"]).MeasureError(
             "no benchmarks matched"
         )
 
@@ -736,8 +736,8 @@ def test_scope_gate_still_catches_an_out_of_scope_edit_after_a_keep_advances_the
         }
     )
     monkeypatch.setattr(
-        "autor3search_python.runner.Runner.pytest_gate",
-        lambda self: __import__("autor3search_python.runner", fromlist=["Result"]).Result(
+        "autor3search.runner.Runner.pytest_gate",
+        lambda self: __import__("autor3search.runner", fromlist=["Result"]).Result(
             (), "", "", 0, False, 0.0
         ),
     )

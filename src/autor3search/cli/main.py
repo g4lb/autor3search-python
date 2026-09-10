@@ -27,7 +27,7 @@ COMMANDS: dict[str, str] = {
 def _load(name: str) -> Callable[[list[str]], int]:
     from importlib import import_module
 
-    return import_module(f"autor3search_python.cli.{name}").run
+    return import_module(f"autor3search.cli.{name}").run
 
 
 def usage(stream) -> None:

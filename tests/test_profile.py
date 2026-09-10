@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import config, profile, profiling
-from autor3search_python.cli import main as cli_main
+from autor3search import config, profile, profiling
+from autor3search.cli import main as cli_main
 from tests.conftest import git
 
 
@@ -274,7 +274,7 @@ def test_one_time_import_cost_does_not_inflate_the_steady_state_peak(lazy_import
 
 @pytest.mark.slow
 def test_profile_writes_no_results_row(repo):
-    from autor3search_python import results
+    from autor3search import results
 
     assert cli_main.main(["profile", "-C", str(repo)]) == 0
     assert not (repo / results.PATH).exists()

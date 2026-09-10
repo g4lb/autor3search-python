@@ -1,6 +1,6 @@
 import pytest
 
-from autor3search_python import containment
+from autor3search import containment
 
 
 def test_is_symlink_true_for_a_symlink(tmp_path):

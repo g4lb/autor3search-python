@@ -1,6 +1,6 @@
 # autor3search-python
 
-[![PyPI](https://img.shields.io/pypi/v/autor3search-python?label=pypi)](https://pypi.org/project/autor3search-python/)
+[![PyPI](https://img.shields.io/pypi/v/autor3search?label=pypi)](https://pypi.org/project/autor3search/)
 [![ci](https://github.com/autor3search/python/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/python/actions/workflows/ci.yml)
 
 **Autonomous AI-driven performance optimization for any Python repository.**
@@ -43,7 +43,7 @@ and paste this:
 Install and run autor3search-python on this repository, then optimize it.
 
 Setup:
-1. uv tool install autor3search-python   (or: pipx install autor3search-python)
+1. uv tool install autor3search   (or: pipx install autor3search)
 2. autor3search-python init
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.

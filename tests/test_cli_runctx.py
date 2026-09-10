@@ -1,8 +1,8 @@
 import pytest
 
-from autor3search_python import gitx, state
-from autor3search_python.cli import main as cli_main
-from autor3search_python.cli import runctx
+from autor3search import gitx, state
+from autor3search.cli import main as cli_main
+from autor3search.cli import runctx
 from tests.conftest import git
 
 

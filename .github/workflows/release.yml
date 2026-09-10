@@ -5,6 +5,9 @@ name: release
 # workflow file, so no API token exists to store, leak or rotate.
 #
 # One-time setup on PyPI (project → Publishing → Add a new publisher):
+#   PyPI project: autor3search   (renamed from autor3search-python; the
+#   publisher must be registered as a PENDING publisher until the first
+#   release of the new name exists)
 #   Owner: autor3search   Repository: python
 #   Workflow: release.yml   Environment: (leave blank)
 #

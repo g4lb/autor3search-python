@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from autor3search_python import stats
+from autor3search import stats
 
 
 @pytest.mark.parametrize(

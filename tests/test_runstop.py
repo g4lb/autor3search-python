@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import runstop
+from autor3search import runstop
 
 
 def test_stop_request_lifecycle(tmp_path):
@@ -46,7 +46,7 @@ def test_a_second_claim_in_another_process_is_refused(tmp_path):
             "-c",
             textwrap.dedent(f"""
             import os, time
-            from autor3search_python import runstop
+            from autor3search import runstop
             with runstop.claim_eval({str(d)!r}, os.getpid()):
                 print("held", flush=True)
                 time.sleep(20)
@@ -75,7 +75,7 @@ def test_a_refused_claim_leaves_the_holders_pid_file_intact(tmp_path):
             "-c",
             textwrap.dedent(f"""
             import os, time
-            from autor3search_python import runstop
+            from autor3search import runstop
             with runstop.claim_eval({str(d)!r}, os.getpid()):
                 print("held", flush=True)
                 time.sleep(20)

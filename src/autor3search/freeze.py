@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from autor3search_python import containment
+from autor3search import containment
 
 STORE_DIR = "frozen"
 MANIFEST_PATH = "frozen/manifest.json"

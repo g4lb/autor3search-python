@@ -1,6 +1,6 @@
 import pytest
 
-from autor3search_python import containment, results
+from autor3search import containment, results
 
 
 def row(**kw):

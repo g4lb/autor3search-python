@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from autor3search_python import config
+from autor3search import config
 
 
 def write(tmp_path, text):

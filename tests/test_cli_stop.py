@@ -2,10 +2,10 @@ import signal
 
 import pytest
 
-from autor3search_python import runstop, state
-from autor3search_python.cli import main as cli_main
-from autor3search_python.cli import stop as cli_stop
-from autor3search_python.cli.main import EXIT_USAGE
+from autor3search import runstop, state
+from autor3search.cli import main as cli_main
+from autor3search.cli import stop as cli_stop
+from autor3search.cli.main import EXIT_USAGE
 from tests.conftest import git
 
 

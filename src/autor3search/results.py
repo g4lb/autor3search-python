@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from autor3search_python import containment
+from autor3search import containment
 
 PATH = "results.tsv"
 HEADER = "commit\tscore\tbest_bench_delta\tstatus\tdescription"

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import IO
 
-from autor3search_python import (
+from autor3search import (
     benchio,
     config,
     containment,

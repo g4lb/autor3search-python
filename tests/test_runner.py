@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from autor3search_python import config, runner
-from autor3search_python.scope import Matcher
+from autor3search import config, runner
+from autor3search.scope import Matcher
 
 
 def r(tmp_path, timeout=30):

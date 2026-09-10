@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from autor3search_python import benchio, runner
-from autor3search_python.config import Config
+from autor3search import benchio, runner
+from autor3search.config import Config
 
 RoundFn = Callable[[int], benchio.Set]
 

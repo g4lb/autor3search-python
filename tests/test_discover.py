@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from autor3search_python import discover
+from autor3search import discover
 
 
 def write(root: Path, rel: str, text: str) -> None:

@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from autor3search_python import benchio, config, measure
-from autor3search_python import runner as runner_mod
+from autor3search import benchio, config, measure
+from autor3search import runner as runner_mod
 
 
 def const(value):

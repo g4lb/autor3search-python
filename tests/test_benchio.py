@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from autor3search_python import benchio
+from autor3search import benchio
 
 
 def payload(*entries):

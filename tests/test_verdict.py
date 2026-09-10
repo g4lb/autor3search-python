@@ -1,7 +1,7 @@
 import pytest
 
-from autor3search_python import verdict
-from autor3search_python.benchio import Delta
+from autor3search import verdict
+from autor3search.benchio import Delta
 
 
 def delta(name="x", pct=0.0, p=1.0, alpha=0.05, n=10, warnings=()):

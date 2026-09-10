@@ -1,7 +1,7 @@
 import pytest
 
-from autor3search_python import results, runstop, state
-from autor3search_python.cli import main as cli_main
+from autor3search import results, runstop, state
+from autor3search.cli import main as cli_main
 from tests.conftest import git
 
 

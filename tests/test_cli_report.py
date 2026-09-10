@@ -1,8 +1,8 @@
 import pytest
 
-from autor3search_python import results
-from autor3search_python.cli import main as cli_main
-from autor3search_python.cli import report as cli_report
+from autor3search import results
+from autor3search.cli import main as cli_main
+from autor3search.cli import report as cli_report
 
 
 def rows(*specs):

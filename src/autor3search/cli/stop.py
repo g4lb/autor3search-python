@@ -21,9 +21,9 @@ import os
 import signal
 import sys
 
-from autor3search_python import gitx, runstop
-from autor3search_python.cli import runctx
-from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
+from autor3search import gitx, runstop
+from autor3search.cli import runctx
+from autor3search.cli.main import EXIT_OK, EXIT_USAGE
 
 # Computed once, same as runstop._POSIX: it selects between the two ways
 # -force can reach a running eval — `_signal_group` calls os.killpg, which

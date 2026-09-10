@@ -1,6 +1,6 @@
 import pytest
 
-from autor3search_python.cli import main as cli_main
+from autor3search.cli import main as cli_main
 
 
 def test_no_args_prints_usage_and_exits_2(capsys):

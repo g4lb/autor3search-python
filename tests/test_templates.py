@@ -1,7 +1,7 @@
 import pathlib
 import re
 
-from autor3search_python import pipeline, templates, verdict
+from autor3search import pipeline, templates, verdict
 
 # Names that do not exist in this project: files it never writes, a config
 # format it does not read, metrics it does not report. Naming one in the

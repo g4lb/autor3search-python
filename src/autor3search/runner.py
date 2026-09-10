@@ -23,11 +23,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
-from autor3search_python import discover, winjob
+from autor3search import discover, winjob
 
 if TYPE_CHECKING:
-    from autor3search_python.config import Config
-    from autor3search_python.scope import Matcher
+    from autor3search.config import Config
+    from autor3search.scope import Matcher
 
 CAP_BYTES = 4 * 1024 * 1024  # per stream
 _TRUNCATED = "\n[output truncated]\n"

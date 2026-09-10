@@ -6,8 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from autor3search_python import config, discover, gitx, profile
-from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
+from autor3search import config, discover, gitx, profile
+from autor3search.cli.main import EXIT_OK, EXIT_USAGE
 
 
 def run(args: list[str]) -> int:

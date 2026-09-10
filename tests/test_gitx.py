@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import gitx
+from autor3search import gitx
 from tests.conftest import git
 
 

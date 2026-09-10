@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import pipeline
+from autor3search import pipeline
 
 README = Path(__file__).parents[1] / "README.md"
 HEADING = "## What the harness enforces"

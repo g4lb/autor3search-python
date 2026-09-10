@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from autor3search_python import (
+from autor3search import (
     benchio,
     containment,
     freeze,
@@ -32,8 +32,8 @@ from autor3search_python import (
     state,
     verdict,
 )
-from autor3search_python.cli import runctx
-from autor3search_python.cli.main import EXIT_USAGE
+from autor3search.cli import runctx
+from autor3search.cli.main import EXIT_USAGE
 
 
 def best_bench_delta(deltas: Sequence[benchio.Delta]) -> float:

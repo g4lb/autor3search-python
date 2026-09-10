@@ -6,8 +6,8 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from autor3search_python import __version__
-from autor3search_python.cli.main import EXIT_OK
+from autor3search import __version__
+from autor3search.cli.main import EXIT_OK
 
 
 def _git(repo: Path, *args: str) -> str | None:

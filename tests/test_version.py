@@ -1,4 +1,4 @@
-from autor3search_python.cli import main as cli_main
+from autor3search.cli import main as cli_main
 
 
 def test_version_prints_a_version(capsys):

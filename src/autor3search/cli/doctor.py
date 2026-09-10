@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from autor3search_python import config, doctor, gitx
-from autor3search_python.cli.main import EXIT_OK
+from autor3search import config, doctor, gitx
+from autor3search.cli.main import EXIT_OK
 
 _LABELS = {
     doctor.Severity.OK: "OK  ",

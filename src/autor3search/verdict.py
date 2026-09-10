@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from autor3search_python import stats
-from autor3search_python.benchio import Delta
+from autor3search import stats
+from autor3search.benchio import Delta
 
 
 class Status(StrEnum):

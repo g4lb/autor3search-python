@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from autor3search_python import results, state
-from autor3search_python.cli import main as cli_main
+from autor3search import results, state
+from autor3search.cli import main as cli_main
 from tests.conftest import git
 
 DEMO = Path(__file__).resolve().parent.parent / "testdata" / "demo"
@@ -37,7 +37,7 @@ def run_eval(repo, desc):
         [
             sys.executable,
             "-m",
-            "autor3search_python.cli.main",
+            "autor3search.cli.main",
             "eval",
             "-C",
             str(repo),

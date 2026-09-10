@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from autor3search_python import containment, profiling, runner
-from autor3search_python.config import Config
+from autor3search import containment, profiling, runner
+from autor3search.config import Config
 
 PROFILE_DIR = ".autor3search/profiles"
 _TOP = 20
@@ -264,7 +264,7 @@ def run_profile(
             "-p",
             "no:cacheprovider",
             "-p",
-            "autor3search_python.profiling",
+            "autor3search.profiling",
             "--import-mode=importlib",
             *extra_args,
             "--",  # see runner.validate_node_ids: node_ids are untrusted, never shell-typed

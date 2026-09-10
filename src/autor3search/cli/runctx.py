@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from autor3search_python import config, gitx, state
+from autor3search import config, gitx, state
 
 
 class ContextError(Exception):

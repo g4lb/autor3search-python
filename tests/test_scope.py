@@ -1,6 +1,6 @@
 import pytest
 
-from autor3search_python.scope import Matcher
+from autor3search.scope import Matcher
 
 
 @pytest.mark.parametrize("pattern", ["./...", "...", "**"])

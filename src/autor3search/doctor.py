@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-from autor3search_python import config, discover, gitx, runner, state
+from autor3search import config, discover, gitx, runner, state
 
 _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
 
@@ -26,11 +26,11 @@ _EXTENSION_SIGNALS = ("Cargo.toml", "meson.build")
 # nothing can be measured at all: a FAIL.
 _MEASURE_MODULES = ("pytest", "pytest_benchmark")
 
-# autor3search_python is needed only because `profile` loads its plugin with
-# `-p autor3search_python.profiling` inside the measuring interpreter, not the
+# autor3search is needed only because `profile` loads its plugin with
+# `-p autor3search.profiling` inside the measuring interpreter, not the
 # one running the harness. `eval` and `bench` never import it there, so its
 # absence is a WARN naming the one thing it breaks, not a repo-wide FAIL.
-_PROFILE_MODULES = ("autor3search_python",)
+_PROFILE_MODULES = ("autor3search",)
 
 _REQUIRED_MODULES = _MEASURE_MODULES + _PROFILE_MODULES
 
@@ -254,8 +254,8 @@ def check_benchmark_tooling(python: str = "") -> Finding:
     """Everything the measuring interpreter must be able to import.
 
     pytest and pytest-benchmark are a FAIL: without them nothing can be
-    measured at all. `autor3search_python` is only a WARN — it is on this list
-    solely because `profile` runs `-p autor3search_python.profiling` under
+    measured at all. `autor3search` is only a WARN — it is on this list
+    solely because `profile` runs `-p autor3search.profiling` under
     exactly this interpreter, not under the one running the harness, so its
     absence breaks `profile` alone. Configure `python` to a venv without the
     harness installed and `eval` still measures fine while `profile` fails at

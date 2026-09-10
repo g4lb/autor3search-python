@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from autor3search_python import winjob
+from autor3search import winjob
 
 
 def test_assign_is_unavailable_off_windows():

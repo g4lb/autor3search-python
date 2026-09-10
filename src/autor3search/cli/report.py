@@ -8,8 +8,8 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from autor3search_python import gitx, results
-from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
+from autor3search import gitx, results
+from autor3search.cli.main import EXIT_OK, EXIT_USAGE
 
 _TOP_WINS = 5
 

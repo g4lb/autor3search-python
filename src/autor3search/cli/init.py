@@ -8,8 +8,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from autor3search_python import config, discover, gitx, pipeline, results, templates
-from autor3search_python.cli.main import EXIT_OK, EXIT_USAGE
+from autor3search import config, discover, gitx, pipeline, results, templates
+from autor3search.cli.main import EXIT_OK, EXIT_USAGE
 
 # ".autor3search/*" ignores everything the harness writes under that directory
 # (profile output, for instance); the negation re-includes config.toml, the one

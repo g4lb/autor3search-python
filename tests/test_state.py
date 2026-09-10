@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from autor3search_python import state
+from autor3search import state
 
 
 @pytest.mark.parametrize("tag", ["sep6", "v1.2_3-rc", "A"])
