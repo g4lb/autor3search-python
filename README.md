@@ -1,4 +1,4 @@
-# autor3search-python
+# autor3search
 
 [![PyPI](https://img.shields.io/pypi/v/autor3search?label=pypi)](https://pypi.org/project/autor3search/)
 [![ci](https://github.com/autor3search/python/actions/workflows/ci.yml/badge.svg)](https://github.com/autor3search/python/actions/workflows/ci.yml)
@@ -6,6 +6,9 @@
 [autoresearch for your codebase](https://autor3search.dev/) — the same loop in seven languages, with every agent prompt in one place.
 
 **Autonomous AI-driven performance optimization for any Python repository.**
+
+Installed as `autor3search`; the command it puts on your PATH is
+`autor3search-python`.
 
 A coding agent proposes one change at a time; a harness the agent cannot edit
 gates the change for correctness, measures it against a pinned baseline with
