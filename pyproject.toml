@@ -11,6 +11,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Gal Be", email = "galevgi@gmail.com" }]
 requires-python = ">=3.11"
 dependencies = []
+keywords = ["autoresearch", "benchmark", "performance", "optimization", "pytest-benchmark", "ai-agent"]
 classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -22,7 +23,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/autor3search/python"
+Homepage = "https://autor3search.dev"
+Repository = "https://github.com/autor3search/python"
 Source = "https://github.com/autor3search/python"
 Issues = "https://github.com/autor3search/python/issues"
 Changelog = "https://github.com/autor3search/python/releases"
