@@ -49,12 +49,16 @@ Install and run autor3search-python on this repository, then optimize it.
 
 Setup:
 1. uv tool install autor3search   (or: pipx install autor3search)
+   Already installed? Upgrade first: uv tool upgrade autor3search
+   (or: pipx upgrade autor3search). Versions before 0.4.3 pick the wrong
+   interpreter and doctor fails at step 4.
 2. autor3search-python init
-   This writes .autor3search/config.toml. Check the `python` line in it: that
-   is the interpreter your benchmarks will run under, and it needs pytest and
-   pytest-benchmark. init fills it in with the project's virtualenv when it
-   finds one. Fix it now if it is wrong — the file is hashed at `baseline`,
-   and editing it afterwards fails every eval with `config_changed`.
+   If .autor3search/config.toml already exists, init will refuse rather than
+   overwrite it; re-run as `autor3search-python init -force` so the config is
+   regenerated. Then show me the `python` line from it — that is the
+   interpreter the benchmarks run under, and it needs pytest and
+   pytest-benchmark. Do this before step 5: the file is hashed at baseline,
+   and editing it afterwards fails every eval with config_changed.
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.
 3. git add -A && git commit -m "autor3search-python init"
@@ -77,8 +81,11 @@ Rules for the whole run:
 - Never edit program.md, .autor3search/config.toml, results.tsv, any test or
   benchmark file, conftest.py, pyproject.toml, or a lockfile. They are not
   yours.
-- Never pass -force to any autor3search-python command. (I may run
-  `autor3search-python stop -force` myself; that one is mine, not yours.)
+- Never pass -force to any autor3search-python command once the run has
+  started — not to eval, not to baseline. The single exception is setup step
+  2, `init -force`, which only regenerates the config before anything is
+  measured. (I may run `autor3search-python stop -force` myself; that one is
+  mine, not yours.)
 - Print one context line before each experiment, so I can see where you are:
   [exp <n> | <branch> | vs <measure_commit> | stop: autor3search-python stop]
 
@@ -132,46 +139,6 @@ slow — and close each route. That is why the things the score depends on live
 **outside the repository the agent edits**: state that lived in-tree would be
 state the same OS user running the agent could simply rewrite.
 
-## The same harness in seven languages
-
-This is the Python member of the [autor3search](https://github.com/autor3search)
-organization. Each repository implements the same loop — freeze, measure
-interleaved against a pinned baseline, score, KEEP or DISCARD — natively for one
-ecosystem, and each publishes to that ecosystem's own registry. None is a
-translation of another; each is written in and for its own language.
-
-| Repository | Registry |
-|---|---|
-| [python](https://github.com/autor3search/python) | [PyPI](https://pypi.org/project/autor3search/) |
-| [typescript](https://github.com/autor3search/typescript) | [npm](https://www.npmjs.com/package/@autor3search/typescript) |
-| [javascript](https://github.com/autor3search/javascript) | [npm](https://www.npmjs.com/package/@autor3search/javascript) |
-| [rust](https://github.com/autor3search/rust) | [crates.io](https://crates.io/crates/autor3search-rust) |
-| [go](https://github.com/autor3search/go) | pkg.go.dev |
-| [java](https://github.com/autor3search/java) | [Maven Central](https://central.sonatype.com/artifact/io.github.autor3search/autor3search-java) |
-| [csharp](https://github.com/autor3search/csharp) | [NuGet](https://www.nuget.org/packages/Autor3Search) |
-
-Every release is published from CI over OpenID Connect, so no registry token
-exists to leak or rotate.
-
-### Which interpreter gets measured
-
-`uv tool install` and `pipx install` put this tool in an environment of its own,
-which is the point of them — but that environment has no pytest, and the harness
-runs your gates and benchmarks through an interpreter, not in-process. So the
-interpreter it measures with is a setting, not an accident:
-
-```toml
-# .autor3search/config.toml
-python = ".venv/bin/python"   # empty means the one running the harness
-```
-
-`init` fills this in with the repository's own virtualenv when it finds one
-(`.venv/` or `venv/`), and otherwise leaves it empty only when the harness's
-interpreter can already import pytest. If `doctor` reports that pytest is not
-importable, this line is what to change — and change it **before** `baseline`,
-because the config is hashed then and any later edit fails every eval with
-`config_changed`.
-
 ## Quick start
 
 ```bash
@@ -201,6 +168,40 @@ autor3search-python eval --json -desc "first idea"        # 4, repeated
    row to `results.tsv`, print one JSON object, exit 0/1/2/3. Repeat this one
    command — commit an idea, `eval`, keep or revert — for as long as the run
    continues.
+
+### Which interpreter gets measured
+
+`uv tool install` and `pipx install` put this tool in an environment of its own,
+which is the point of them — but that environment has no pytest, and the harness
+runs your gates and benchmarks through an interpreter, not in-process. So the
+interpreter it measures with is a setting, not an accident:
+
+```toml
+# .autor3search/config.toml
+python = ".venv/bin/python"   # empty means the one running the harness
+```
+
+**Already ran `init` on an older version?** Versions before 0.4.3 left this
+empty, which resolves to the interpreter running the harness — and under
+`uv tool` or `pipx` that one cannot import pytest, so `doctor` reports:
+
+```
+FAIL  pytest-benchmark  pytest and pytest_benchmark are not importable by ...
+```
+
+Upgrade, then regenerate the config — `init` will not overwrite it otherwise:
+
+```bash
+uv tool upgrade autor3search          # or: pipx upgrade autor3search
+autor3search-python init -force
+```
+
+`init` fills this in with the repository's own virtualenv when it finds one
+(`.venv/` or `venv/`), and otherwise leaves it empty only when the harness's
+interpreter can already import pytest. If `doctor` reports that pytest is not
+importable, this line is what to change — and change it **before** `baseline`,
+because the config is hashed then and any later edit fails every eval with
+`config_changed`.
 
 ## Watching a run, and stopping it
 
