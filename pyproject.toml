@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "autor3search"
-version = "0.4.2"
+version = "0.4.3"
 description = "Autonomous AI-driven performance optimization for any Python repository"
 readme = "README.md"
 license = { file = "LICENSE" }

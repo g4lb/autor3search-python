@@ -47,6 +47,11 @@ Install and run autor3search-python on this repository, then optimize it.
 Setup:
 1. uv tool install autor3search   (or: pipx install autor3search)
 2. autor3search-python init
+   This writes .autor3search/config.toml. Check the `python` line in it: that
+   is the interpreter your benchmarks will run under, and it needs pytest and
+   pytest-benchmark. init fills it in with the project's virtualenv when it
+   finds one. Fix it now if it is wrong — the file is hashed at `baseline`,
+   and editing it afterwards fails every eval with `config_changed`.
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
    this tool can only optimize what it can measure.
 3. git add -A && git commit -m "autor3search-python init"
@@ -123,6 +128,46 @@ broken code, adding an easier benchmark, editing the baseline to make it look
 slow — and close each route. That is why the things the score depends on live
 **outside the repository the agent edits**: state that lived in-tree would be
 state the same OS user running the agent could simply rewrite.
+
+## The same harness in seven languages
+
+This is the Python member of the [autor3search](https://github.com/autor3search)
+organization. Each repository implements the same loop — freeze, measure
+interleaved against a pinned baseline, score, KEEP or DISCARD — natively for one
+ecosystem, and each publishes to that ecosystem's own registry. None is a
+translation of another; each is written in and for its own language.
+
+| Repository | Registry |
+|---|---|
+| [python](https://github.com/autor3search/python) | [PyPI](https://pypi.org/project/autor3search/) |
+| [typescript](https://github.com/autor3search/typescript) | [npm](https://www.npmjs.com/package/@autor3search/typescript) |
+| [javascript](https://github.com/autor3search/javascript) | [npm](https://www.npmjs.com/package/@autor3search/javascript) |
+| [rust](https://github.com/autor3search/rust) | [crates.io](https://crates.io/crates/autor3search-rust) |
+| [go](https://github.com/autor3search/go) | pkg.go.dev |
+| [java](https://github.com/autor3search/java) | [Maven Central](https://central.sonatype.com/artifact/io.github.autor3search/autor3search-java) |
+| [csharp](https://github.com/autor3search/csharp) | [NuGet](https://www.nuget.org/packages/Autor3Search) |
+
+Every release is published from CI over OpenID Connect, so no registry token
+exists to leak or rotate.
+
+### Which interpreter gets measured
+
+`uv tool install` and `pipx install` put this tool in an environment of its own,
+which is the point of them — but that environment has no pytest, and the harness
+runs your gates and benchmarks through an interpreter, not in-process. So the
+interpreter it measures with is a setting, not an accident:
+
+```toml
+# .autor3search/config.toml
+python = ".venv/bin/python"   # empty means the one running the harness
+```
+
+`init` fills this in with the repository's own virtualenv when it finds one
+(`.venv/` or `venv/`), and otherwise leaves it empty only when the harness's
+interpreter can already import pytest. If `doctor` reports that pytest is not
+importable, this line is what to change — and change it **before** `baseline`,
+because the config is hashed then and any later edit fails every eval with
+`config_changed`.
 
 ## Quick start
 

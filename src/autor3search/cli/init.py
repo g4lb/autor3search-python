@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import shutil
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -40,6 +42,51 @@ def default_tag() -> str:
     """Suggest a run tag from today's date, e.g. "sep6"."""
     now = dt.datetime.now()
     return f"{now:%b}".lower() + str(now.day)
+
+
+def _project_interpreter(root: Path) -> str:
+    """Pick the interpreter that should run gates and benchmarks.
+
+    Defaulting to the harness's own interpreter (`sys.executable`) is right when
+    the tool was pip-installed into the project's environment, and wrong every
+    time it was not. The README recommends `uv tool install` and `pipx install`,
+    both of which are deliberately isolated: pytest is not importable there and
+    never will be, so that default turns `doctor` into a hard FAIL for anyone
+    following the documented path, and points them at pip-installing into a
+    managed venv to boot.
+
+    So prefer an interpreter that belongs to the repository, and only fall back
+    to the harness's when the harness's can actually import pytest.
+    """
+    for rel in (
+        ".venv/bin/python",
+        "venv/bin/python",
+        ".venv/Scripts/python.exe",
+        "venv/Scripts/python.exe",
+    ):
+        if (root / rel).exists():
+            return rel
+
+    def _has_pytest(exe: str) -> bool:
+        try:
+            return (
+                subprocess.run(
+                    [exe, "-c", "import pytest, pytest_benchmark"],
+                    capture_output=True,
+                    timeout=30,
+                ).returncode
+                == 0
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    if _has_pytest(sys.executable):
+        return ""  # empty means "the one running the harness"
+    for name in ("python3", "python"):
+        exe = shutil.which(name)
+        if exe and _has_pytest(exe):
+            return exe
+    return ""
 
 
 def _toml_list(key: str, items: Sequence[str]) -> str:
@@ -129,7 +176,10 @@ def render_config(cfg: config.Config) -> str:
     b.append("\n")
 
     b.append("# The interpreter to run gates and benchmarks with. Empty means the one\n")
-    b.append("# running the harness.\n")
+    b.append("# running the harness — which is only right when the harness was\n")
+    b.append("# installed into this project's environment. `uv tool` and `pipx`\n")
+    b.append("# install it in isolation, where pytest is not importable, so init\n")
+    b.append("# fills this in with the project's interpreter when it finds one.\n")
     b.append(f'python = "{cfg.python}"\n\n')
 
     b.append("# Files deliberately exempted from the baseline freeze — normally empty.\n")
@@ -208,7 +258,13 @@ def run(args: list[str]) -> int:
         return EXIT_USAGE
     names = discover.node_ids(found)
 
-    cfg = config.Config(**{**config.default().__dict__, "benchmarks": tuple(names)})
+    cfg = config.Config(
+        **{
+            **config.default().__dict__,
+            "benchmarks": tuple(names),
+            "python": _project_interpreter(root),
+        }
+    )
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(render_config(cfg), encoding="utf-8")
 

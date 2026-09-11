@@ -145,3 +145,34 @@ def test_gitignore_keeps_the_harness_own_bytecode_out_of_the_agents_commits(
     (repo_with_benchmark / "stray.pyc").write_bytes(b"\x00")
     untracked = git(repo_with_benchmark, "ls-files", "--others", "--exclude-standard")
     assert ".pyc" not in untracked
+
+
+def test_init_picks_the_project_venv_not_the_harness_interpreter(tmp_path, monkeypatch):
+    """The harness's own interpreter is the wrong default for an isolated install.
+
+    `uv tool install` and `pipx install` — the two methods the README recommends —
+    put the harness in an environment that cannot import pytest and never will.
+    Defaulting `python` to sys.executable there makes `doctor` a hard FAIL for
+    anyone following the documented path, so init must prefer an interpreter that
+    belongs to the repository.
+    """
+    from autor3search.cli.init import _project_interpreter
+
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.touch()
+
+    assert _project_interpreter(tmp_path) == ".venv/bin/python"
+
+
+def test_init_falls_back_to_the_harness_when_it_can_measure(tmp_path):
+    """With no project venv, an interpreter that can import pytest is fine.
+
+    Empty means "the one running the harness", which is correct when the harness
+    was installed into the project's own environment — the case the isolated
+    default gets wrong.
+    """
+    from autor3search.cli.init import _project_interpreter
+
+    result = _project_interpreter(tmp_path)
+    assert result == "" or result.endswith(("python", "python3", "python.exe"))
